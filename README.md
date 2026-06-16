@@ -30,7 +30,7 @@ Nova is a modern simplified C++ with a touch of Lua, designed for clarity and mo
 fn       if       else     for      return
 break    continue class    enum
 typeof   sizeof   switch   case
-import   template try      catch
+template
 ```
 
 ---
@@ -118,17 +118,6 @@ for string s = it.next() {
 
 ## 🧱 Data Structures
 
-Only one way to structure and object-oriented classes.
-
-### Class
-
-```nova
-class Vec2 {
-  float x,
-  i32 y,
-}
-```
-
 ### Enum
 
 ```nova
@@ -170,67 +159,3 @@ switch color {
     print("Wait")
 }
 ```
-
----
-
-## 📦 Modules
-
-Nova does not use a pre-processor and will find defines from module exports.
-
-```nova
-import math
-
-fn main() {
-  print(math.sqrt(16))
-}
-```
-
-## ⚠️ Exceptions
-
-Nova will support basic exception handling using `throw` and `catch`.
-
-### Throwing an Exception
-
-```nova
-fn risky()
-  throw "Something went wrong"
-```
-
-### Catching Exceptions
-
-```nova
-fn main() {
-  try
-    risky()
-  catch err
-    print("Error was: " + err)
-}
-```
-
-You can catch exceptions using a scoped `try`/`catch` block. The error object can be a string or structured data depending on the throw.
-
----
-
-## 🧬 Generics
-
-Nova will eventually support generics using the `template` keyword before `fn` or `class`.
-
-### Generic Function
-
-```nova
-template<T>
-fn T identity(T value) {
-  return value
-}
-```
-
-### Generic Class
-
-```nova
-template<T>
-class Box {
-  T value
-}
-```
-
-Generics allow type-safe, reusable code without sacrificing readability.

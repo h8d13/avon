@@ -23,8 +23,9 @@ local expected = {
   "test:",
   "MOV r1, arg_x",
   "MOV r2, 2",
-  "ADD r1, r2",
-  "MOV r0, r1",
+  "MOV r3, r1", -- fresh dest so the param register r1 is not clobbered
+  "ADD r3, r2",
+  "MOV r0, r3",
   "RET",
 }
 

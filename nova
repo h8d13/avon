@@ -1,0 +1,61 @@
+#!/usr/bin/env lua
+-- Nova runner: parse a .nova file, lower it to pseudo-IR, execute it.
+-- Usage: ./nova <file.nova> [--entry name] [int args...]
+--   --entry  function to call (default: main)
+--   int args are passed to that function
+
+local here = arg[0]:match("^(.*)/[^/]*$") or "."
+package.path = here .. "/lang/?.lua;" .. here .. "/codegen/?.lua;"
+            .. package.path
+
+local Parser = require("parser")
+local Codegen = require("codegen")
+local VM = require("vm")
+
+local file, entry, callargs = nil, "main", {}
+local i = 1
+while i <= #arg do
+  local a = arg[i]
+  if a == "--entry" then
+    entry = arg[i + 1]; i = i + 2
+  elseif not file then
+    file = a; i = i + 1
+  else
+    local n = tonumber(a)
+    if not n then error("argument is not an integer: " .. a) end
+    callargs[#callargs + 1] = n; i = i + 1
+  end
+end
+
+if not file then
+  io.stderr:write("usage: nova <file.nova> [--entry name] [int args...]\n")
+  os.exit(1)
+end
+
+local fh = assert(io.open(file, "r"))
+local src = fh:read("*a")
+fh:close()
+
+local ast = Parser:new(src):parse()
+
+-- collect defined function names for entry validation / helpful errors
+local funcs = {}
+for _, node in ipairs(ast.body) do
+  if node.type == "function" then funcs[node.name] = true end
+end
+if not funcs[entry] then
+  local names = {}
+  for name in pairs(funcs) do names[#names + 1] = name end
+  table.sort(names)
+  io.stderr:write(string.format("nova: no function '%s' in %s\n", entry, file))
+  if #names > 0 then
+    io.stderr:write("  available: " .. table.concat(names, ", ") .. "\n")
+  end
+  io.stderr:write("  pass one with --entry <name>\n")
+  os.exit(1)
+end
+
+local insns = Codegen.new():generate(ast.body)
+local vm = VM.new(insns)
+local rets = vm:run(entry, callargs)
+print(rets[1] or 0)

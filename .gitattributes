@@ -1,0 +1,2 @@
+# anything .nova render as lua in gh/other providers
+*.nova linguist-language=Lua

@@ -34,10 +34,15 @@ local TokenType = {
 -- Operator precedence levels
 local Precedence = {
   ["="] = 1,
+  ["+="] = 1, ["-="] = 1, ["*="] = 1, ["/="] = 1, ["%="] = 1,
+  ["?"] = 1.5, -- ternary, above assignment, below ||
   ["||"] = 2,
   ["&&"] = 3,
+  -- bitwise sit between && and == (C order |, ^, & ascending)
+  ["|"] = 3.2, ["^"] = 3.4, ["&"] = 3.6,
   ["=="] = 4, ["!="] = 4,
   ["<"] = 5, ["<="] = 5, [">"] = 5, [">="] = 5,
+  ["<<"] = 5.5, [">>"] = 5.5, -- shifts above comparison, below +
   ["+"] = 6, ["-"] = 6,
   ["*"] = 7, ["/"] = 7, ["%"] = 7,
   ["("] = 8, -- function calls
@@ -47,6 +52,7 @@ local Precedence = {
 local keywords = {
   ["fn"]=true, ["if"]=true, ["else"]=true, ["for"]=true, ["return"]=true,
   ["typedef"]=true, ["struct"]=true,
+  ["switch"]=true, ["case"]=true, ["default"]=true, ["enum"]=true,
 }
 
 local function is_space(c) return c == ' ' or c == '\n' or c == '\r' or c == '\t' end
@@ -61,14 +67,27 @@ function Tokenizer:next()
     if is_space(c) then
       i = i + 1
 
-    -- comment
+    -- line comment
     elseif c == "/" and input:sub(i+1, i+1) == "/" then
       i = i + 2
       while i <= len and input:sub(i, i) ~= "\n" do i = i + 1 end
 
+    -- block comment
+    elseif c == "/" and input:sub(i+1, i+1) == "*" then
+      i = i + 2
+      while i <= len and not (input:sub(i,i) == "*" and input:sub(i+1,i+1) == "/") do
+        i = i + 1
+      end
+      i = i + 2 -- skip closing */
+
     elseif is_digit(c) then
       local start = i
       while i <= len and is_digit(input:sub(i, i)) do i = i + 1 end
+      -- fractional part: a '.' followed by at least one digit makes it a float
+      if input:sub(i, i) == "." and is_digit(input:sub(i+1, i+1)) then
+        i = i + 1
+        while i <= len and is_digit(input:sub(i, i)) do i = i + 1 end
+      end
       self.i = i
       return {type=TokenType.Number, value=tonumber(input:sub(start, i-1))}
 
@@ -88,15 +107,46 @@ function Tokenizer:next()
       self.i = i + 1
       return {type=TokenType.String, value=str}
 
+    -- char literal: 'c' or an escape like '\n'; value is the byte code
+    elseif c == "'" then
+      local ch = input:sub(i+1, i+1)
+      local code, after
+      if ch == "\\" then
+        local esc = input:sub(i+2, i+2)
+        local map = {n=10, t=9, r=13, ["0"]=0, ["\\"]=92, ["'"]=39}
+        code = map[esc] or string.byte(esc)
+        after = i + 3 -- '\x
+      else
+        code = string.byte(ch)
+        after = i + 2 -- 'x
+      end
+      if input:sub(after, after) ~= "'" then
+        error("unterminated char literal")
+      end
+      self.i = after + 1
+      return {type=TokenType.Number, value=code}
+
     else
       local sym = c
-      if (c == '=' or c == '!' or c == '<' or c == '>') and input:sub(i+1,i+1) == '=' then
+      local n = input:sub(i+1, i+1)
+      if (c == '=' or c == '!' or c == '<' or c == '>') and n == '=' then
         sym = c .. '='
         i = i + 1
-      elseif c == '&' and input:sub(i+1, i+1) == '&' then
+      elseif (c == '+' or c == '-' or c == '*' or c == '/' or c == '%')
+          and n == '=' then
+        sym = c .. '='; i = i + 1 -- compound assignment
+      elseif c == '+' and n == '+' then
+        sym = '++'; i = i + 1
+      elseif c == '-' and n == '-' then
+        sym = '--'; i = i + 1
+      elseif c == '&' and n == '&' then
         sym = '&&'; i = i + 1
-      elseif c == '|' and input:sub(i+1, i+1) == '|' then
+      elseif c == '|' and n == '|' then
         sym = '||'; i = i + 1
+      elseif c == '<' and n == '<' then
+        sym = '<<'; i = i + 1
+      elseif c == '>' and n == '>' then
+        sym = '>>'; i = i + 1
       end
       self.i = i + 1
      return {type=TokenType.Symbol, value=sym}
@@ -113,6 +163,11 @@ function Tokenizer:peek()
   self.i = i
   return token
 end
+
+-- Backtracking support: capture/restore scan state so callers do not
+-- depend on the internal layout of the tokenizer.
+function Tokenizer:mark() return self.i end
+function Tokenizer:reset(m) self.i = m end
 
 Parser = Object:new()
 
@@ -150,6 +205,8 @@ Parser = Object:new()
     if tok.type == TokenType.Number or tok.type == TokenType.String then
       return {type="literal", value=tok.value}
     elseif tok.type == TokenType.Ident then
+      if tok.value == "true" then return {type="literal", value=1} end
+      if tok.value == "false" then return {type="literal", value=0} end
       if self:peek().value == "(" then
         return self:parse_call(tok.value)
       end
@@ -161,9 +218,22 @@ Parser = Object:new()
     elseif tok.value == "-" then
       local right = self:parse_expression(Precedence["-"])
       return {type="unary", op="-", right=right}
+    elseif tok.value == "!" or tok.value == "~" then
+      local right = self:parse_expression(Precedence["*"]) -- tight prefix bind
+      return {type="unary", op=tok.value, right=right}
+    elseif tok.value == "++" or tok.value == "--" then
+      -- prefix ++/--: desugar `++x` to `x = x + 1`
+      local target = self:parse_expression(Precedence["*"])
+      local bop = tok.value == "++" and "+" or "-"
+      return {type="binary", op="=", left=target,
+              right={type="binary", op=bop, left=target,
+                     right={type="literal", value=1}}}
     end
     error("Unexpected token: " .. tok.value)
   end
+
+  -- compound assignment ops desugar `a OP= b` to `a = a OP b`
+  local compound = {["+="]="+", ["-="]="-", ["*="]="*", ["/="]="/", ["%="]="%"}
 
   -- Left denotation (binary infix)
   function Parser:led(op_tok, left)
@@ -171,6 +241,18 @@ Parser = Object:new()
       local index = self:parse_expression()
       self:expect("]")
       return {type="index", array=left, index=index}
+    end
+    if op_tok.value == "?" then
+      local then_e = self:parse_expression(0) -- delimited by ':'
+      self:expect(":")
+      local else_e = self:parse_expression(0) -- right-assoc: binds rest
+      return {type="ternary", cond=left, thenE=then_e, elseE=else_e}
+    end
+    local cop = compound[op_tok.value]
+    if cop then
+      local rhs = self:parse_expression(Precedence[op_tok.value] - 1) -- right-assoc
+      return {type="binary", op="=", left=left,
+              right={type="binary", op=cop, left=left, right=rhs}}
     end
     local right = self:parse_expression(Precedence[op_tok.value])
     return {type="binary", op=op_tok.value, left=left, right=right}
@@ -193,7 +275,7 @@ Parser = Object:new()
   -- Both forms start `Ident [ ... ]`; the closing `]` is followed by the
   -- variable name in a decl, by an operator in an lvalue index.
   function Parser:looks_like_decl()
-    local save = self.tokens.i
+    local save = self.tokens:mark()
     self:next() -- the leading type identifier
     local result = false
     local t1 = self:peek()
@@ -210,7 +292,7 @@ Parser = Object:new()
       end
       result = self:peek().type == TokenType.Ident -- `T[N] name`
     end
-    self.tokens.i = save
+    self.tokens:reset(save)
     return result
   end
 
@@ -227,9 +309,18 @@ Parser = Object:new()
       return self:parse_typedef()
     elseif tok.type == TokenType.Keyword and tok.value == "struct" then
       return self:parse_struct()
+    elseif tok.type == TokenType.Keyword and tok.value == "switch" then
+      return self:parse_switch()
+    elseif tok.type == TokenType.Keyword and tok.value == "enum" then
+      return self:parse_enum()
     elseif tok.type == TokenType.Keyword and tok.value == "return" then
       self:next()
-      return {type="return", value=self:parse_expression()}
+      local values = {self:parse_expression()}
+      while self:peek().value == "," do
+        self:next()
+        table.insert(values, self:parse_expression())
+      end
+      return {type="return", values=values}
     elseif tok.type == TokenType.Ident then
       if self:looks_like_decl() then
         return self:parse_declaration()
@@ -237,6 +328,57 @@ Parser = Object:new()
     end
 
     return self:parse_expression()
+  end
+
+  -- enum variants become auto-incrementing integer constants from 0
+  function Parser:parse_enum()
+    self:expect("enum")
+    local name = self:expect(TokenType.Ident).value
+    self:expect("{")
+    local variants = {}
+    while self:peek().value ~= "}" do
+      table.insert(variants, self:expect(TokenType.Ident).value)
+      if self:peek().value == "," then self:next() end
+    end
+    self:expect("}")
+    return {type="enum", name=name, variants=variants}
+  end
+
+  function Parser:parse_switch()
+    self:expect("switch")
+    local subject = self:parse_expression()
+    self:expect("{")
+    local cases = {}
+    local default_body = nil
+    while self:peek().value ~= "}" do
+      if self:peek().value == "case" then
+        self:next()
+        local value = self:parse_expression()
+        self:expect(":")
+        table.insert(cases, {value=value, body=self:parse_case_body()})
+      elseif self:peek().value == "default" then
+        self:next()
+        self:expect(":")
+        default_body = self:parse_case_body()
+      else
+        error("Expected case or default in switch, got " .. self:peek().value)
+      end
+    end
+    self:expect("}")
+    return {type="switch", subject=subject, cases=cases, default=default_body}
+  end
+
+  -- case body runs until the next case/default or the closing brace; no
+  -- fall-through, so no `break` is needed
+  function Parser:parse_case_body()
+    local body = {}
+    while true do
+      local v = self:peek().value
+      if v == "case" or v == "default" or v == "}" then break end
+      table.insert(body, self:parse_statement())
+      if self:peek().value == ";" then self:next() end
+    end
+    return body
   end
 
   function Parser:parse_block()
@@ -368,9 +510,11 @@ Parser = Object:new()
   function Parser:parse_for()
     self:expect("for")
 
-    -- Parse init statement
+    -- Parse init statement. A declaration init already consumes its own
+    -- terminating ';' (and returns a decl list with no .type); an expression
+    -- init does not, so only expect ';' in that case.
     local init = self:parse_statement()
-    self:expect(";")
+    if init.type then self:expect(";") end
 
     -- Parse condition
     local cond = self:parse_expression()
