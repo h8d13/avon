@@ -41,6 +41,7 @@ local Precedence = {
   ["+"] = 6, ["-"] = 6,
   ["*"] = 7, ["/"] = 7, ["%"] = 7,
   ["("] = 8, -- function calls
+  ["["] = 8, -- array subscript
 }
 
 local keywords = {
@@ -166,6 +167,11 @@ Parser = Object:new()
 
   -- Left denotation (binary infix)
   function Parser:led(op_tok, left)
+    if op_tok.value == "[" then
+      local index = self:parse_expression()
+      self:expect("]")
+      return {type="index", array=left, index=index}
+    end
     local right = self:parse_expression(Precedence[op_tok.value])
     return {type="binary", op=op_tok.value, left=left, right=right}
   end

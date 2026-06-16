@@ -139,6 +139,23 @@ enum Color {
 }
 ```
 
+### Array
+
+Fixed-size arrays declare with `[N]` after the type, index with `[i]`.
+
+```nova
+int[10] xs;
+xs[0] = 1;
+int v = xs[i + 1];
+```
+
+Indexing chains for nested arrays and call results.
+
+```nova
+int v = grid[a][b];
+int w = row()[0];
+```
+
 ---
 
 ## 🧩 Match Expression
