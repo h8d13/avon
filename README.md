@@ -1,4 +1,4 @@
-# A simply minimal programming language for the future
+# A simple minimal programming language
 
 In a world where new hyped language compilers and runtime std libraries are implemented in 4GB of sources, it's time for a reset.
 
