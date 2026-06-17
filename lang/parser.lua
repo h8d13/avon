@@ -15,8 +15,9 @@ local Tokenizer = Object:new()
 
 function Tokenizer:new(input)
 	local o = Object.new(self)
-	o.input = input
-	o.i, o.len = 1, #input
+	o.aliases = {}
+	o.input = o:extract_pragmas(input)
+	o.i, o.len = 1, #o.input
 	return o
 end
 
@@ -81,6 +82,26 @@ local keywords = {
 	["throw"] = true,
 	["import"] = true,
 }
+
+-- `__<keyword> = <alias>` lines register a per-file keyword alias and are
+-- blanked out (not deleted) so downstream byte offsets and line:col reporting
+-- stay accurate. Runs once at tokenizer construction, before any scanning.
+function Tokenizer:extract_pragmas(input)
+	return (
+		input:gsub("[^\n]*", function(line)
+			local kw, alias = line:match("^%s*__(%w+)%s*=%s*(%w+)%s*$")
+			if not kw then return line end
+			if not keywords[kw] then
+				error("unknown keyword in alias: " .. kw, 0)
+			end
+			if keywords[alias] then
+				error("alias shadows keyword: " .. alias, 0)
+			end
+			self.aliases[alias] = kw
+			return ""
+		end)
+	)
+end
 
 local function is_space(c) return c == " " or c == "\n" or c == "\r" or c == "\t" end
 local function is_alpha(c) return c:match("%a") ~= nil or c == "_" end
@@ -172,6 +193,7 @@ function Tokenizer:scan_ident()
 		i = i + 1
 	end
 	local word = input:sub(start, i - 1)
+	word = self.aliases[word] or word -- rewrite alias to its canonical keyword
 	self.i = i
 	local kind = keywords[word] and TokenType.Keyword or TokenType.Ident
 	return { type = kind, value = word }
