@@ -231,3 +231,5 @@ import a.b.c as g   // root/a/b/c.nova    -> g.fn(...)
 This project was originally developped by @rxrbln but had very different goals (codegen, RISC-V).
 But this idea was basically re-inventing Lua's contributors' work, which was impractical.
 I thought the idea was elegant and generalized it for **x86_64 target only**, straight `load()` to Lua.
+
+> It also was missing a lot of features that were described in the documentation. Which now mostly work.
