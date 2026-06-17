@@ -17,101 +17,96 @@
 -- its own environment, so its functions resolve their own imports in isolation.
 local Parser = require("parser")
 local Avon = require("avon")
+local fs = require("fs")
 
 local Loader = {}
 
 local function dirname(p) return p:match("^(.*)/[^/]*$") or "." end
 
-local function file_exists(p)
-  local f = io.open(p, "r")
-  if f then f:close(); return true end
-  return false
-end
-
--- io.open succeeds on a directory (POSIX), so guard the extensionless case:
--- "<path>/." opens only for a directory.
-local function is_dir(p)
-  local f = io.open(p .. "/.")
-  if f then f:close(); return true end
-  return false
-end
-
 -- Resolve a dotted module to a Nova source file under `base`: prefer the
 -- `.nova` file, then an extensionless file of the same name (not a directory).
 -- Returns nil if neither exists (the caller then treats it as a host module).
 local function module_to_file(base, dotted)
-  local stem = base .. "/" .. dotted:gsub("%.", "/")
-  if file_exists(stem .. ".nova") then return stem .. ".nova" end
-  if file_exists(stem) and not is_dir(stem) then return stem end
-  return nil
+	local stem = base .. "/" .. dotted:gsub("%.", "/")
+	if fs.exists(stem .. ".nova") then return stem .. ".nova" end
+	if fs.exists(stem) and not fs.is_dir(stem) then return stem end
+	return nil
 end
 
 -- bind value at a dotted path, creating intermediate tables: a.b.c = value
 local function bind_nested(env, dotted, value)
-  local parts = {}
-  for seg in dotted:gmatch("[^.]+") do parts[#parts + 1] = seg end
-  local t = env
-  for i = 1, #parts - 1 do
-    local k = parts[i]
-    if type(t[k]) ~= "table" then t[k] = {} end
-    t = t[k]
-  end
-  t[parts[#parts]] = value
+	local parts = {}
+	for seg in dotted:gmatch("[^.]+") do
+		parts[#parts + 1] = seg
+	end
+	local t = env
+	for i = 1, #parts - 1 do
+		local k = parts[i]
+		if type(t[k]) ~= "table" then t[k] = {} end
+		t = t[k]
+	end
+	t[parts[#parts]] = value
 end
 
 -- the host stdlib every module sees (the only builtins; the runner delegates
 -- here, it has none of its own)
 local function host_env()
-  local env = {pow = function(a, b) return a ^ b end}
-  env.print = function(...) print(...) return 0 end
-  for _, name in ipairs({"sqrt", "floor", "ceil", "sin", "cos", "log"}) do
-    env[name] = math[name]
-  end
-  return env
+	local env = { pow = function(a, b) return a ^ b end }
+	env.print = function(...)
+		print(...)
+		return 0
+	end
+	for _, name in ipairs({ "sqrt", "floor", "ceil", "sin", "cos", "log" }) do
+		env[name] = math[name]
+	end
+	return env
 end
 
 -- compile one file, recursively loading its Nova imports. `root` is the entry
 -- directory all dotted paths resolve against; `cache` memoizes by path (so a
 -- shared dependency compiles once); `stack` detects import cycles.
 local function load_file(path, root, cache, stack)
-  if cache[path] then return cache[path] end
-  if stack[path] then error("circular import at " .. path) end
-  stack[path] = true
+	if cache[path] then return cache[path] end
+	if stack[path] then error("circular import at " .. path) end
+	stack[path] = true
 
-  local fh, oerr = io.open(path, "r")
-  if not fh then error("cannot open module: " .. tostring(oerr)) end
-  local src = fh:read("*a"); fh:close()
-  local ast = Parser:new(src):parse()
+	local fh, oerr = io.open(path, "r")
+	if not fh then error("cannot open module: " .. tostring(oerr)) end
+	local src = fh:read("*a")
+	fh:close()
+	local ast = Parser:new(src):parse()
 
-  local env = host_env()
-  for _, node in ipairs(ast.body) do
-    if node.type == "import" then
-      local file = module_to_file(root, node.module)
-      local value
-      if file then
-        value = load_file(file, root, cache, stack) -- a Nova module (.nova or extensionless)
-      else
-        value = _G[node.module] or require(node.module) -- a host module
-      end
-      if node.alias ~= node.module then
-        env[node.alias] = value         -- `as`: bind under the alias name
-      else
-        bind_nested(env, node.module, value) -- namespaced by dotted path
-      end
-    end
-  end
+	local env = host_env()
+	for _, node in ipairs(ast.body) do
+		if node.type == "import" then
+			local file = module_to_file(root, node.module)
+			local value
+			if file then
+				-- a Nova module (.nova or extensionless)
+				value = load_file(file, root, cache, stack)
+			else
+				-- a host module
+				value = _G[node.module] or require(node.module)
+			end
+			if node.alias ~= node.module then
+				-- `as`: bind under the alias name
+				env[node.alias] = value
+			else
+				-- namespaced by dotted path
+				bind_nested(env, node.module, value)
+			end
+		end
+	end
 
-  local mods = Avon.load(ast.body, env)
-  cache[path] = mods
-  stack[path] = nil
-  return mods
+	local mods = Avon.load(ast.body, env)
+	cache[path] = mods
+	stack[path] = nil
+	return mods
 end
 
 -- Load `path` and all its transitive Nova imports; returns the entry file's
 -- table of functions (name -> Lua function). Dotted imports resolve from the
 -- entry file's directory.
-function Loader.run(path)
-  return load_file(path, dirname(path), {}, {})
-end
+function Loader.run(path) return load_file(path, dirname(path), {}, {}) end
 
 return Loader

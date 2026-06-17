@@ -5,33 +5,42 @@
 local E = require("tests/eval")
 
 local function eq(src, expected, label)
-  local got = E.run(src)
-  if got ~= expected then
-    error(string.format("%s: expected %q, got %q", label, expected, got))
-  end
+	local got = E.run(src)
+	if got ~= expected then
+		error(string.format("%s: expected %q, got %q", label, expected, got))
+	end
 end
 
 -- write a cell, read it back
-eq([[
+eq(
+	[[
   fn int main() {
     int[4] xs;
     xs[0] = 7;
     return xs[0]
   }
-]], 7, "store then load")
+]],
+	7,
+	"store then load"
+)
 
 -- index by a computed expression
-eq([[
+eq(
+	[[
   fn int main() {
     int[8] xs;
     int i = 2;
     xs[i + 1] = 99;
     return xs[3]
   }
-]], 99, "index by expression")
+]],
+	99,
+	"index by expression"
+)
 
 -- fill in a loop, then sum in a loop
-eq([[
+eq(
+	[[
   fn int main() {
     int[5] xs;
     for int i = 0; i < 5; ++i { xs[i] = i * i }
@@ -39,25 +48,37 @@ eq([[
     for int j = 0; j < 5; ++j { s += xs[j] }
     return s
   }
-]], 30, "fill and sum (0+1+4+9+16)")
+]],
+	30,
+	"fill and sum (0+1+4+9+16)"
+)
 
 -- distinct cells do not alias
-eq([[
+eq(
+	[[
   fn int main() {
     int[3] xs;
     xs[0] = 1; xs[1] = 2; xs[2] = 3;
     return xs[0] * 100 + xs[1] * 10 + xs[2]
   }
-]], 123, "cells independent")
+]],
+	123,
+	"cells independent"
+)
 
 -- pointer model: index a returned array directly
-eq([[
+eq(
+	[[
   fn int row() { int[2] r; r[0] = 7; r[1] = 8; return r }
   fn int main() { return row()[1] }
-]], 8, "index a returned array (row()[1])")
+]],
+	8,
+	"index a returned array (row()[1])"
+)
 
 -- jagged grid: each cell holds a row pointer, indexed as grid[a][b]
-eq([[
+eq(
+	[[
   fn int mk(int v) { int[2] r; r[0] = v; r[1] = v + 1; return r }
   fn int main() {
     int[2] grid;
@@ -65,12 +86,19 @@ eq([[
     grid[1] = mk(20);
     return grid[0][1] + grid[1][0]
   }
-]], 31, "jagged grid[a][b] via stored row pointers (11 + 20)")
+]],
+	31,
+	"jagged grid[a][b] via stored row pointers (11 + 20)"
+)
 
 -- arrays pass by pointer: a callee mutates the caller's array through it
-eq([[
+eq(
+	[[
   fn int fill(int p) { p[0] = 42; return 0 }
   fn int main() { int[1] a; fill(a); return a[0] }
-]], 42, "array passed by pointer, mutated in callee")
+]],
+	42,
+	"array passed by pointer, mutated in callee"
+)
 
 print("ok")

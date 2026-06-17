@@ -3,10 +3,10 @@
 local E = require("tests/eval")
 
 local function eq(src, expected, label)
-  local got = E.run(src)
-  if got ~= expected then
-    error(string.format("%s: expected %q, got %q", label, expected, got))
-  end
+	local got = E.run(src)
+	if got ~= expected then
+		error(string.format("%s: expected %q, got %q", label, expected, got))
+	end
 end
 
 local function main(expr) return "fn int main() { return " .. expr .. " }" end
@@ -36,28 +36,41 @@ eq(main("!5"), 0, "not nonzero")
 
 -- short-circuit: the RHS is skipped once the result is decided, so a throwing
 -- RHS is never reached
-eq([[
+eq(
+	[[
   fn int crash() { throw 1 }
   fn int main() { return 1 || crash() }
-]], 1, "|| skips RHS when LHS is true")
-eq([[
+]],
+	1,
+	"|| skips RHS when LHS is true"
+)
+eq(
+	[[
   fn int crash() { throw 1 }
   fn int main() { return 0 && crash() }
-]], 0, "&& skips RHS when LHS is false")
+]],
+	0,
+	"&& skips RHS when LHS is false"
+)
 
 -- the RHS still runs when the result is undecided
-eq([[
+eq(
+	[[
   fn int crash() { throw 1 }
   fn int main() {
     int r = 0;
     try { r = 1 && crash() } catch e { r = 42 }
     return r
   }
-]], 42, "&& evaluates RHS when LHS is true")
+]],
+	42,
+	"&& evaluates RHS when LHS is true"
+)
 
 -- the practical payoff: a guard `cond && use(p)` where use(p) faults on a bad
 -- p. The guard being false skips use(p), so no fault -- the whole point.
-eq([[
+eq(
+	[[
   fn int strict(int p) { if p == 0 { throw 1 } return p }
   fn int main() {
     int p = 0;
@@ -65,17 +78,20 @@ eq([[
     if p != 0 && strict(p) > 0 { ok = 1 }
     return ok
   }
-]], 5, "&& guards a faulting RHS (strict not called when p == 0)")
+]],
+	5,
+	"&& guards a faulting RHS (strict not called when p == 0)"
+)
 
 -- prove no side effect fires on the skipped branch (neither RHS runs)
 do
-  local _, out = E.run([[
+	local _, out = E.run([[
     fn int noise() { print("ran"); return 1 }
     fn int main() { int a = 1 || noise(); int b = 0 && noise(); return a + b }
   ]])
-  if #out ~= 0 then
-    error("short-circuit: RHS ran, saw output: " .. table.concat(out, ","))
-  end
+	if #out ~= 0 then
+		error("short-circuit: RHS ran, saw output: " .. table.concat(out, ","))
+	end
 end
 
 -- bitwise
@@ -96,7 +112,11 @@ eq(main("7 > 3 ? 1 : 2"), 1, "ternary true")
 eq(main("1 ? 2 ? 10 : 20 : 30"), 10, "nested ternary")
 
 -- compound assignment desugars and returns updated value via the var
-eq("fn int main() { int x = 10; x += 5; x *= 2; x -= 3; return x }", 27, "compound assign chain")
+eq(
+	"fn int main() { int x = 10; x += 5; x *= 2; x -= 3; return x }",
+	27,
+	"compound assign chain"
+)
 eq("fn int main() { int x = 17; x %= 5; return x }", 2, "compound mod assign")
 eq("fn int main() { int x = 20; x /= 4; return x }", 5, "compound div assign")
 

@@ -8,39 +8,53 @@
 local E = require("tests/eval")
 
 local function fails(src, label)
-  if not E.fails(src) then
-    error(label .. ": expected failure, but it ran (gap closed? update tests)")
-  end
+	if not E.fails(src) then
+		error(label .. ": expected failure but it ran (gap closed?)")
+	end
 end
 
 -- asserts the program runs but returns the wrong value (silent mis-parse, not
 -- a hard error) -- the worst failure kind, so it is pinned explicitly.
 local function wrong(src, bad, label)
-  local got = E.run(src)
-  if got ~= bad then
-    error(string.format("%s: expected the known-bad %q, got %q (behavior " ..
-      "changed -- update tests)", label, bad, got))
-  end
+	local got = E.run(src)
+	if got ~= bad then
+		error(
+			string.format(
+				"%s: expected the known-bad %q, got %q (behavior "
+					.. "changed -- update tests)",
+				label,
+				bad,
+				got
+			)
+		)
+	end
 end
 
 -- brace-less `if ... else` needs a `;` before `else`
-fails([[
+fails(
+	[[
   fn int m(int x) {
     if x > 0 return 1
     else return 0
   }
   fn int main() { return m(5) }
-]], "brace-less if/else without semicolon")
+]],
+	"brace-less if/else without semicolon"
+)
 
 -- brace-less `if` then-branch with no `;`, followed by another statement:
 -- parses, but the trailing statement is lost. fact(5) should be 120; the
 -- un-terminated base case makes it return 0.
-wrong([[
+wrong(
+	[[
   fn int fact(int n) {
     if n <= 1 return 1
     return n * fact(n - 1)
   }
   fn int main() { return fact(5) }
-]], 0, "brace-less if swallows next statement")
+]],
+	0,
+	"brace-less if swallows next statement"
+)
 
 print("ok")

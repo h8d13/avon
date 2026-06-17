@@ -4,31 +4,31 @@
 
 // call + return + branch heavy (recursion exercises the calling convention)
 fn int fib(int n) {
-  if n < 2 { return n }
-  return fib(n - 1) + fib(n - 2)
+	if n < 2 { return n }
+	return fib(n - 1) + fib(n - 2)
 }
 
 // tight arithmetic loop: dispatch + math + jumps, no allocation
 fn int loopsum(int n) {
-  int s = 0;
-  for int i = 0; i < n; ++i {
-    s += i * 2 - 1
-  }
-  return s
+	int s = 0;
+	for int i = 0; i < n; ++i {
+		s += i * 2 - 1
+	}
+	return s
 }
 
 // memory traffic: fill a fixed array then sum it
 fn int arraywork(int reps) {
-  int s = 0;
-  for int k = 0; k < reps; ++k {
-    int[1000] xs;
-    for int i = 0; i < 1000; ++i { xs[i] = i * i }
-    for int j = 0; j < 1000; ++j { s += xs[j] }
-  }
-  return s
+	int s = 0;
+	for int k = 0; k < reps; ++k {
+		int[1000] xs;
+		for int i = 0; i < 1000; ++i { xs[i] = i * i }
+		for int j = 0; j < 1000; ++j { s += xs[j] }
+	}
+	return s
 }
 
 // lets `./nova bench.nova` run as a sanity check without args
 fn int main() {
-  return fib(20) + loopsum(1000) + arraywork(1)
+	return fib(20) + loopsum(1000) + arraywork(1)
 }

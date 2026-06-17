@@ -4,10 +4,10 @@
 local E = require("tests/eval")
 
 local function eq(src, expected, label)
-  local got = E.run(src)
-  if got ~= expected then
-    error(string.format("%s: expected %q, got %q", label, expected, got))
-  end
+	local got = E.run(src)
+	if got ~= expected then
+		error(string.format("%s: expected %q, got %q", label, expected, got))
+	end
 end
 
 -- char literals lower to their integer code
@@ -22,24 +22,28 @@ eq("fn float main() { return 0.1 + 0.2 }", 0.1 + 0.2, "float add matches host")
 
 -- string concat: string + string, and string + int (int stringified)
 do
-  local _, out = E.run([[
+	local _, out = E.run([[
     fn int main() { print("a" + "b" + "c"); return 0 }
   ]])
-  if out[1] ~= "abc" then error("string+string: got " .. tostring(out[1])) end
+	if out[1] ~= "abc" then error("string+string: got " .. tostring(out[1])) end
 end
 do
-  local _, out = E.run([[
+	local _, out = E.run([[
     fn int main() { print("n=" + 42); return 0 }
   ]])
-  if out[1] ~= "n=42" then error("string+int: got " .. tostring(out[1])) end
+	if out[1] ~= "n=42" then error("string+int: got " .. tostring(out[1])) end
 end
 
 -- both comment forms are skipped by the lexer: slash line and block
-eq([[
+eq(
+	[[
   // slash line comment
   /* block
      comment */
   fn int main() { return 7 /* trailing */ }
-]], 7, "comments ignored")
+]],
+	7,
+	"comments ignored"
+)
 
 print("ok")

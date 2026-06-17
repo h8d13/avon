@@ -5,10 +5,10 @@
 local E = require("tests/eval")
 
 local function eq(src, expected, label)
-  local got = E.run(src)
-  if got ~= expected then
-    error(string.format("%s: expected %q, got %q", label, expected, got))
-  end
+	local got = E.run(src)
+	if got ~= expected then
+		error(string.format("%s: expected %q, got %q", label, expected, got))
+	end
 end
 
 -- if/else with optional braces and optional parens on the condition
@@ -17,35 +17,48 @@ eq("fn int main() { if 1 < 0 { return 10 } else { return 20 } }", 20, "else bran
 eq("fn int main() { if 1 > 0 return 10; return 20 }", 10, "if braceless single stmt")
 -- brace-less then-branches must be `;`-terminated before `else`/next stmt
 -- (see eval_unsupported.lua for the un-terminated form that mis-parses).
-eq([[
+eq(
+	[[
   fn int classify(int x) {
     if x > 0 return 1;
     else if x < 0 return 2;
     else return 0;
   }
   fn int main() { return classify(0) * 100 + classify(-4) * 10 + classify(9) }
-]], 21, "else-if chain picks right arm")
+]],
+	21,
+	"else-if chain picks right arm"
+)
 
 -- for: sum 0..9, classic accumulation
-eq([[
+eq(
+	[[
   fn int main() {
     int s = 0;
     for int i = 0; i < 10; ++i { s += i }
     return s
   }
-]], 45, "for accumulate")
+]],
+	45,
+	"for accumulate"
+)
 
 -- for with a condition false on entry runs zero times
-eq([[
+eq(
+	[[
   fn int main() {
     int s = 100;
     for int i = 0; i < 0; ++i { s += 1 }
     return s
   }
-]], 100, "for zero iterations")
+]],
+	100,
+	"for zero iterations"
+)
 
 -- break exits early; sum stops at i==5
-eq([[
+eq(
+	[[
   fn int main() {
     int s = 0;
     for int i = 0; i < 10; ++i {
@@ -54,10 +67,14 @@ eq([[
     }
     return s
   }
-]], 10, "break exits loop (0+1+2+3+4)")
+]],
+	10,
+	"break exits loop (0+1+2+3+4)"
+)
 
 -- continue skips the rest of the body; sum only odd indices < 10
-eq([[
+eq(
+	[[
   fn int main() {
     int s = 0;
     for int i = 0; i < 10; ++i {
@@ -66,12 +83,16 @@ eq([[
     }
     return s
   }
-]], 25, "continue skips evens (1+3+5+7+9)")
+]],
+	25,
+	"continue skips evens (1+3+5+7+9)"
+)
 
 -- iterator-form for: re-evaluates the init expr each pass, binds it, runs the
 -- body while non-zero. A generator holds state in a heap cell reached through
 -- a pointer arg (arrays pass by base address), yielding ...,2,1 then 0 = stop.
-eq([[
+eq(
+	[[
   fn int next(int box) { int v = box[0]; box[0] = v - 1; return v }
   fn int main() {
     int[1] c; c[0] = 5;
@@ -79,10 +100,14 @@ eq([[
     for int x = next(c) { sum += x }
     return sum
   }
-]], 15, "iterator for sums 5+4+3+2+1, stops at 0")
+]],
+	15,
+	"iterator for sums 5+4+3+2+1, stops at 0"
+)
 
 -- break leaves the iterator loop early
-eq([[
+eq(
+	[[
   fn int next(int box) { int v = box[0]; box[0] = v - 1; return v }
   fn int main() {
     int[1] c; c[0] = 9;
@@ -93,10 +118,14 @@ eq([[
     }
     return last
   }
-]], 7, "iterator for break (last body-visited x is 7)")
+]],
+	7,
+	"iterator for break (last body-visited x is 7)"
+)
 
 -- a generator that is empty on entry (yields 0 first) runs the body zero times
-eq([[
+eq(
+	[[
   fn int next(int box) { int v = box[0]; box[0] = v - 1; return v }
   fn int main() {
     int[1] c; c[0] = 0;
@@ -104,10 +133,14 @@ eq([[
     for int x = next(c) { n = 1 }
     return n
   }
-]], 100, "iterator for zero iterations when first yield is 0")
+]],
+	100,
+	"iterator for zero iterations when first yield is 0"
+)
 
 -- switch: matching case, default fallback, and no implicit fall-through
-eq([[
+eq(
+	[[
   fn int pick(int x) {
     switch x {
       case 1: return 10
@@ -116,8 +149,12 @@ eq([[
     }
   }
   fn int main() { return pick(2) }
-]], 20, "switch matches case")
-eq([[
+]],
+	20,
+	"switch matches case"
+)
+eq(
+	[[
   fn int pick(int x) {
     switch x {
       case 1: return 10
@@ -125,10 +162,14 @@ eq([[
     }
   }
   fn int main() { return pick(7) }
-]], 99, "switch default")
+]],
+	99,
+	"switch default"
+)
 
 -- switch over enum variant values
-eq([[
+eq(
+	[[
   enum Color { Red, Green, Blue }
   fn int main() {
     int c = Blue;
@@ -139,6 +180,9 @@ eq([[
       default: return 0
     }
   }
-]], 3, "switch on enum value")
+]],
+	3,
+	"switch on enum value"
+)
 
 print("ok")
