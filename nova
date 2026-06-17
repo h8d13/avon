@@ -3,10 +3,7 @@
 -- Usage: ./nova <file.nova> [--entry name] [int args...]
 --   --entry  function to call (default: main)
 --   int args are passed to that function
---
--- `import`ing a luarocks package uses Lua's normal module search, so set up
--- your rock tree the usual way (e.g. `eval "$(luarocks path)"`). C rocks are
--- built per Lua version, so run under the Lua the rock was built for.
+-- imports (Nova files, extensionless modules, luarocks packages): see README.
 
 local here = arg[0]:match("^(.*)/[^/]*$") or "."
 package.path = here .. "/lang/?.lua;" .. here .. "/codegen/?.lua;" .. package.path
