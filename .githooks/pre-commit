@@ -1,0 +1,13 @@
+#!/bin/sh
+# Nova pre-commit: syntax-check staged .nova files (parse + transpile).
+# Enable once with:  git config core.hooksPath .githooks
+set -e
+
+files=$(git diff --cached --name-only --diff-filter=ACM | grep '\.nova$' || true)
+[ -z "$files" ] && exit 0
+
+lua=$(command -v lua5.4 || command -v luajit || command -v lua)
+[ -z "$lua" ] && { echo "pre-commit: no lua interpreter found" >&2; exit 1; }
+
+# shellcheck disable=SC2086
+"$lua" tools/check.lua $files

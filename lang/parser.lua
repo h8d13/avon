@@ -85,6 +85,7 @@ function Tokenizer:next()
 
     elseif is_digit(c) then
       local start = i
+      self.last_pos = i
       while i <= len and is_digit(input:sub(i, i)) do i = i + 1 end
       -- fractional part: a '.' followed by at least one digit makes it a float.
       -- Tag it: under Lua 5.1/LuaJIT every number is a double, so the value
@@ -101,6 +102,7 @@ function Tokenizer:next()
 
     elseif is_alpha(c) then
       local start = i
+      self.last_pos = i
       while i <= len and input:sub(i, i):match("[%w_]") do i = i + 1 end
       local word = input:sub(start, i-1)
       local type = keywords[word] and TokenType.Keyword or TokenType.Ident
@@ -108,6 +110,7 @@ function Tokenizer:next()
       return {type=type, value=word}
 
     elseif c == '"' then
+      self.last_pos = i
       i = i + 1
       local start = i
       while i <= len and input:sub(i, i) ~= '"' do i = i + 1 end
@@ -117,6 +120,7 @@ function Tokenizer:next()
 
     -- char literal: 'c' or an escape like '\n'; value is the byte code
     elseif c == "'" then
+      self.last_pos = i
       local ch = input:sub(i+1, i+1)
       local code, after
       if ch == "\\" then
@@ -129,12 +133,14 @@ function Tokenizer:next()
         after = i + 2 -- 'x
       end
       if input:sub(after, after) ~= "'" then
-        error("unterminated char literal")
+        local l, c = self:linecol()
+        error(string.format("%d:%d: unterminated char literal", l, c), 0)
       end
       self.i = after + 1
       return {type=TokenType.Number, value=code}
 
     else
+      self.last_pos = i
       local sym = c
       local n = input:sub(i+1, i+1)
       if (c == '=' or c == '!' or c == '<' or c == '>') and n == '=' then
@@ -175,6 +181,16 @@ end
 function Tokenizer:mark() return self.i end
 function Tokenizer:reset(m) self.i = m end
 
+-- 1-based line and column of byte offset `pos`. Defaults to the start of the
+-- most recently scanned token (set in next()), so an error points at the token
+-- itself, not the whitespace after it.
+function Tokenizer:linecol(pos)
+  pos = pos or self.last_pos or self.i
+  local line, last = 1, 0
+  for at in self.input:sub(1, pos):gmatch("()\n") do line = line + 1; last = at end
+  return line, pos - last
+end
+
 Parser = Object:new()
 
   function Parser:new(input)
@@ -186,10 +202,16 @@ Parser = Object:new()
   function Parser:peek() return self.tokens:peek() end
   function Parser:next() return self.tokens:next() end
 
+  -- raise a parse error tagged with line:col (level 0 = no Lua location prefix)
+  function Parser:err(msg)
+    local line, col = self.tokens:linecol()
+    error(string.format("%d:%d: %s", line, col, msg), 0)
+  end
+
   function Parser:expect(type_or_val)
     local tok = self:next()
     if tok.type ~= type_or_val and tok.value ~= type_or_val then
-      error("Expected " .. type_or_val .. ", got " .. tok.value)
+      self:err("Expected " .. type_or_val .. ", got " .. tok.value)
     end
     return tok
   end
@@ -241,7 +263,7 @@ Parser = Object:new()
               right={type="binary", op="+", left=target,
                      right={type="literal", value=1}}}
     end
-    error("Unexpected token: " .. tok.value)
+    self:err("Unexpected token: " .. tok.value)
   end
 
   -- compound assignment ops desugar `a OP= b` to `a = a OP b`
@@ -382,7 +404,7 @@ Parser = Object:new()
     local body = self:parse_block()
     local kw = self:peek().value
     if kw ~= "catch" and kw ~= "except" then
-      error("Expected catch/except after try, got " .. kw)
+      self:err("Expected catch/except after try, got " .. kw)
     end
     self:next()
     local var = self:expect(TokenType.Ident).value
@@ -407,7 +429,7 @@ Parser = Object:new()
         self:expect(":")
         default_body = self:parse_case_body()
       else
-        error("Expected case or default in switch, got " .. self:peek().value)
+        self:err("Expected case or default in switch, got " .. self:peek().value)
       end
     end
     self:expect("}")
