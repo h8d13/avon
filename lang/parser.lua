@@ -13,9 +13,13 @@ end
 
 local Tokenizer = Object:new()
 
-function Tokenizer:new(input)
+-- `prelude` is an optional project-wide source of `__` directives (`.novapre`);
+-- its aliases seed this file's table, then file-local directives add to them.
+-- Only the file's own text becomes self.input, so error line:col is unshifted.
+function Tokenizer:new(input, prelude)
 	local o = Object.new(self)
 	o.aliases = {}
+	if prelude then o:extract_pragmas(prelude) end
 	o.input = o:extract_pragmas(input)
 	o.i, o.len = 1, #o.input
 	return o
@@ -61,6 +65,7 @@ local Precedence = {
 	["%"] = 7,
 	["("] = 8, -- function calls
 	["["] = 8, -- array subscript
+	["."] = 8, -- member access on a call/index result (postfix)
 }
 
 local keywords = {
@@ -83,21 +88,21 @@ local keywords = {
 	["import"] = true,
 }
 
--- `__<keyword> = <alias>` lines register a per-file keyword alias and are
--- blanked out (not deleted) so downstream byte offsets and line:col reporting
--- stay accurate. Runs once at tokenizer construction, before any scanning.
+-- `__<target> = <alias>` lines register a per-file word rewrite (`alias` ->
+-- `target`) and are blanked out (not deleted) so downstream byte offsets and
+-- line:col reporting stay accurate. Runs once at construction, before scanning.
+-- `target` may be a keyword (rewrite classifies as that keyword) or any other
+-- identifier such as a host/user function name (rewrite stays an identifier);
+-- non-keyword targets are unchecked, so a typo surfaces as a runtime nil-call.
 function Tokenizer:extract_pragmas(input)
 	return (
 		input:gsub("[^\n]*", function(line)
-			local kw, alias = line:match("^%s*__(%w+)%s*=%s*(%w+)%s*$")
-			if not kw then return line end
-			if not keywords[kw] then
-				error("unknown keyword in alias: " .. kw, 0)
-			end
+			local target, alias = line:match("^%s*__(%w+)%s*=%s*(%w+)%s*$")
+			if not target then return line end
 			if keywords[alias] then
 				error("alias shadows keyword: " .. alias, 0)
 			end
-			self.aliases[alias] = kw
+			self.aliases[alias] = target
 			return ""
 		end)
 	)
@@ -295,9 +300,9 @@ end
 
 local Parser = Object:new()
 
-function Parser:new(input)
+function Parser:new(input, prelude)
 	local o = Object.new(self)
-	o.tokens = Tokenizer:new(input)
+	o.tokens = Tokenizer:new(input, prelude)
 	return o
 end
 
@@ -389,6 +394,18 @@ function Parser:led(op_tok, left)
 		self:expect("]")
 		return { type = "index", array = left, index = index }
 	end
+	if op_tok.value == "." then
+		-- postfix member access: fires only when `.` follows a non-identifier
+		-- result (a call/index/group); plain `a.b.c` is folded into a dotted
+		-- name string in nud and never reaches here.
+		local field = self:expect(TokenType.Ident).value
+		return { type = "member", obj = left, field = field }
+	end
+	if op_tok.value == "(" then
+		-- postfix call of an arbitrary callee: `f()()`, `obj.m()`, `g[i]()`.
+		-- The opening `(` is already consumed by the Pratt loop.
+		return { type = "call", callee = left, args = self:parse_args_rest() }
+	end
 	if op_tok.value == "?" then
 		local then_e = self:parse_expression(0) -- delimited by ':'
 		self:expect(":")
@@ -410,8 +427,8 @@ function Parser:led(op_tok, left)
 	return { type = "binary", op = op_tok.value, left = left, right = right }
 end
 
-function Parser:parse_call(name)
-	self:expect("(")
+-- parse `arg, arg, ...)` after the opening `(` has been consumed
+function Parser:parse_args_rest()
 	local args = {}
 	if self:peek().value ~= ")" then
 		repeat
@@ -419,7 +436,16 @@ function Parser:parse_call(name)
 		until self:peek().value ~= "," or not self:next()
 	end
 	self:expect(")")
-	return { type = "call", name = name, args = args }
+	return args
+end
+
+-- a call by name: `name(...)`. `name` is the dotted-string callee built in nud
+-- (math.sqrt, a user fn); the name-string form keeps the int-return inference
+-- keyed on the function name. Chained callees (require("m").sqrt) come through
+-- the `(` led instead, carrying a `callee` expression rather than a name.
+function Parser:parse_call(name)
+	self:expect("(")
+	return { type = "call", name = name, args = self:parse_args_rest() }
 end
 
 -- Lookahead: is this Ident-led statement a declaration (`T name` /

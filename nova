@@ -46,7 +46,10 @@ fh:close()
 -- error() raised in the toolchain, a missing entry, or an uncaught Nova throw
 -- is caught and reported cleanly.
 local ok, result = pcall(function()
-	local ast = Parser:new(src):parse()
+	-- same prelude the loader applies (rooted at the entry file's directory),
+	-- so entry validation sees an aliased `fn` too
+	local root = file:match("^(.*)/[^/]*$") or "."
+	local ast = Parser:new(src, Loader.prelude(root)):parse()
 
 	-- validate the entry point with a helpful list of what's available
 	local funcs = {}

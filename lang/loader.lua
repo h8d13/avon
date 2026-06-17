@@ -23,6 +23,17 @@ local Loader = {}
 
 local function dirname(p) return p:match("^(.*)/[^/]*$") or "." end
 
+-- Optional project-wide prelude of `__` keyword-alias directives. Lives at the
+-- entry directory root; its aliases apply to every compiled file (the entry and
+-- all imports), so an alias declared once is seen project-wide.
+function Loader.prelude(root)
+	local fh = io.open(root .. "/.novapre", "r")
+	if not fh then return nil end
+	local src = fh:read("*a")
+	fh:close()
+	return src
+end
+
 -- Resolve a dotted module to a Nova source file under `base`: prefer the
 -- `.nova` file, then an extensionless file of the same name (not a directory).
 -- Returns nil if neither exists (the caller then treats it as a host module).
@@ -48,16 +59,14 @@ local function bind_nested(env, dotted, value)
 	t[parts[#parts]] = value
 end
 
--- the host stdlib every module sees (the only builtins; the runner delegates
--- here, it has none of its own)
+-- the ambient builtins every module sees unqualified. Kept deliberately small:
+-- the rest of Lua's stdlib is reached qualified via `import` (e.g. `import math`
+-- -> `math.sqrt(...)`), so only names with no qualified home live here.
 local function host_env()
 	local env = { pow = function(a, b) return a ^ b end }
 	env.print = function(...)
 		print(...)
 		return 0
-	end
-	for _, name in ipairs({ "sqrt", "floor", "ceil", "sin", "cos", "log" }) do
-		env[name] = math[name]
 	end
 	return env
 end
@@ -65,7 +74,7 @@ end
 -- compile one file, recursively loading its Nova imports. `root` is the entry
 -- directory all dotted paths resolve against; `cache` memoizes by path (so a
 -- shared dependency compiles once); `stack` detects import cycles.
-local function load_file(path, root, cache, stack)
+local function load_file(path, root, cache, stack, prelude)
 	if cache[path] then return cache[path] end
 	if stack[path] then error("circular import at " .. path) end
 	stack[path] = true
@@ -74,7 +83,7 @@ local function load_file(path, root, cache, stack)
 	if not fh then error("cannot open module: " .. tostring(oerr)) end
 	local src = fh:read("*a")
 	fh:close()
-	local ast = Parser:new(src):parse()
+	local ast = Parser:new(src, prelude):parse()
 
 	local env = host_env()
 	for _, node in ipairs(ast.body) do
@@ -83,7 +92,7 @@ local function load_file(path, root, cache, stack)
 			local value
 			if file then
 				-- a Nova module (.nova or extensionless)
-				value = load_file(file, root, cache, stack)
+				value = load_file(file, root, cache, stack, prelude)
 			else
 				-- a host module
 				value = _G[node.module] or require(node.module)
@@ -107,6 +116,9 @@ end
 -- Load `path` and all its transitive Nova imports; returns the entry file's
 -- table of functions (name -> Lua function). Dotted imports resolve from the
 -- entry file's directory.
-function Loader.run(path) return load_file(path, dirname(path), {}, {}) end
+function Loader.run(path)
+	local root = dirname(path)
+	return load_file(path, root, {}, {}, Loader.prelude(root))
+end
 
 return Loader

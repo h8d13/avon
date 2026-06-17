@@ -62,4 +62,14 @@ eq(
 	"original math still reachable as a Lua global"
 )
 
+-- postfix member access chained on a call result (`require("m").fn(...)`):
+-- `.` is a real postfix operator, not just part of a dotted name in nud
+eq(
+	[[
+  fn int main() { return require("math").floor(3.9) }
+]],
+	3,
+	"chained member on call result"
+)
+
 print("ok")

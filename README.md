@@ -38,7 +38,35 @@ break    continue
 switch   case     default
 enum     typedef
 try      catch    except   throw
+import
 ```
+
+### Aliasing words
+
+Any word can be re-spelled per file with a `__<target> = <alias>` directive
+at the top. The `__` prefix is the namespace for touching internals.
+
+```cpp
+__return = ret      // keyword
+__fn     = func     // keyword
+__print  = p        // host function
+
+func int add(int a, int b) {
+	p("adding");
+	ret a + b
+}
+```
+
+`target` is a keyword (the rewrite is treated as that keyword) or any other
+identifier such as a host/user function name (the rewrite stays an
+identifier). Targets are not checked against any symbol table, so a typo in a
+function target surfaces as a runtime nil-call, not a parse error. An alias
+may not be an existing keyword.
+
+Scope is the file (aliases do not leak across `import`). To share aliases
+project-wide, put the directives in a `.novapre` file at the entry
+directory; every compiled file (entry and imports) inherits them. For
+*type* names use `typedef` instead.
 
 ---
 

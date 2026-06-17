@@ -122,7 +122,10 @@ function E(cx, node)
 		-- expression position (matches the VM taking result slot 0);
 		-- destructure and bare-call-statement build their own call text and
 		-- keep all values
-		return "(" .. node.name .. "(" .. args_str(cx, node.args) .. "))"
+		local fn = node.name or ("(" .. E(cx, node.callee) .. ")")
+		return "(" .. fn .. "(" .. args_str(cx, node.args) .. "))"
+	elseif t == "member" then
+		return E(cx, node.obj) .. "." .. node.field
 	elseif t == "binary" then
 		return E_binary(cx, node)
 	end
@@ -144,8 +147,10 @@ function is_int(cx, node)
 	elseif t == "index" then
 		return node.array.type == "identifier"
 			and cx.typeenv[node.array.name] == "arr:int"
+	elseif t == "member" then
+		return false -- host field access: unknown type, treat as real
 	elseif t == "call" then
-		return cx.ret_int[node.name] == true
+		return node.name ~= nil and cx.ret_int[node.name] == true
 	elseif t == "unary" then
 		if node.op == "!" or node.op == "~" then return true end
 		return is_int(cx, node.right) -- unary minus
@@ -284,7 +289,7 @@ function emit_decl_list(cx, decls)
 			"local "
 				.. table.concat(ns, ", ")
 				.. " = "
-				.. call.name
+				.. (call.name or ("(" .. E(cx, call.callee) .. ")"))
 				.. "("
 				.. args_str(cx, call.args)
 				.. ")"
@@ -410,7 +415,8 @@ function emit_stmt(cx, node, cl)
 			push(cx, "local _ = " .. E(cx, node)) -- bare expression (rare)
 		end
 	elseif t == "call" then
-		push(cx, node.name .. "(" .. args_str(cx, node.args) .. ")")
+		local fn = node.name or ("(" .. E(cx, node.callee) .. ")")
+		push(cx, fn .. "(" .. args_str(cx, node.args) .. ")")
 	elseif t == "index" or t == "identifier" or t == "literal" then
 		push(cx, "local _ = " .. E(cx, node))
 	elseif t == "if" then
@@ -639,15 +645,16 @@ local function emit_function(cx, n, min_args)
 end
 
 -- the minimum arg count seen at any internal call site, per function name.
--- Calls are always by name (Nova has no first-class functions), so this is a
--- complete static view. A parameter needs its `or 0` default only if some call
--- passes fewer args than its position; a function never called internally has
--- no entry and is treated as saturated (the runner pads entry args to 0).
+-- Nova functions are always called by name (no first-class functions), so this
+-- is a complete static view of them; chained host calls (a `callee`, no name)
+-- are skipped. A parameter needs its `or 0` default only if some call passes
+-- fewer args than its position; a function never called internally has no entry
+-- and is treated as saturated (the runner pads entry args to 0).
 local function scan_min_args(body)
 	local min_args = {}
 	local function scan(node)
 		if type(node) ~= "table" then return end
-		if node.type == "call" then
+		if node.type == "call" and node.name then
 			local cur = min_args[node.name]
 			if cur == nil or #node.args < cur then
 				min_args[node.name] = #node.args
