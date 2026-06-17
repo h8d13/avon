@@ -12,10 +12,10 @@ end
 
 -- Lexer: returns tokens as {type=..., value=...}
 
-Tokenizer = Object:new()
+local Tokenizer = Object:new()
 
 function Tokenizer:new(input)
-  o = Object.new(self)
+  local o = Object.new(self)
   o.input = input
   o.i, o.len = 1, #input
   return o
@@ -191,7 +191,7 @@ function Tokenizer:linecol(pos)
   return line, pos - last
 end
 
-Parser = Object:new()
+local Parser = Object:new()
 
   function Parser:new(input)
     local o = Object.new(self)
@@ -515,20 +515,17 @@ Parser = Object:new()
   end
 
   function Parser:parse_function()
-    -- 1. Match the 'fn' keyword
     self:expect("fn")
 
-    -- 2. Parse return types (comma-separated identifiers)
+    -- return types: comma-separated identifiers, before the name
     local return_types = {}
     repeat
       local tok = self:expect(TokenType.Ident)
       table.insert(return_types, tok.value)
     until self:peek().value ~= "," or not self:next()
 
-    -- 3. Parse function name
     local name = self:expect(TokenType.Ident).value
 
-    -- 4. Parse parameter list
     self:expect("(")
     local params = {}
     if self:peek().value ~= ")" then
@@ -540,7 +537,6 @@ Parser = Object:new()
     end
     self:expect(")")
 
-    -- 5. Parse function body
     local body = self:parse_block()
 
     return {type="function", name=name, returnTypes=return_types, params=params, body=body}

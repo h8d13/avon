@@ -35,7 +35,7 @@ local function gather(args)
   local files = {}
   for _, a in ipairs(args) do
     if is_dir(a) then
-      local p = io.popen('find "' .. a .. '" -name "*.nova" 2>/dev/null')
+      local p = io.popen('find "' .. a .. '" -name "*.nova"')
       if p then
         for line in p:lines() do files[#files + 1] = line end
         p:close()

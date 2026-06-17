@@ -59,7 +59,8 @@ local function bind_nested(env, dotted, value)
   t[parts[#parts]] = value
 end
 
--- the host stdlib every module sees (mirrors the runner's builtins)
+-- the host stdlib every module sees (the only builtins; the runner delegates
+-- here, it has none of its own)
 local function host_env()
   local env = {pow = function(a, b) return a ^ b end}
   env.print = function(...) print(...) return 0 end
