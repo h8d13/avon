@@ -56,7 +56,7 @@ local cmp = {
 -- mutually recursive emitters (E <-> E_binary <-> Econd, emit_stmt <-> block),
 -- forward-declared so the bodies below can reference each other.
 local E, E_binary, Econd, is_int, args_str
-local emit_decl, emit_decl_list, emit_for_init, emit_assign
+local emit_decl, emit_decl_list, emit_for_init, emit_assign, emit_for
 local emit_stmt, emit_switch, emit_try, block
 
 -- append one source line at the current indent
@@ -296,6 +296,79 @@ function emit_decl_list(cx, decls)
 	end
 end
 
+-- collect every identifier name referenced in an expression subtree
+local function expr_names(node, out)
+	if type(node) ~= "table" then return out end
+	if node.type == "identifier" then out[node.name] = true end
+	for _, v in pairs(node) do
+		expr_names(v, out)
+	end
+	return out
+end
+
+-- does any assignment in this AST subtree target a name in `names`? (`++`/`+=`
+-- desugar to `=` at parse, so this also catches those.)
+local function assigns_name(node, names)
+	if type(node) ~= "table" then return false end
+	if node.type == "binary" and node.op == "=" then
+		local tgt = node.left
+		local nm = tgt.type == "identifier" and tgt.name
+			or (
+				tgt.type == "index"
+				and tgt.array.type == "identifier"
+				and tgt.array.name
+			)
+		if nm and names[nm] then return true end
+	end
+	for _, v in pairs(node) do
+		if type(v) == "table" and assigns_name(v, names) then return true end
+	end
+	return false
+end
+
+-- recognize the canonical counting loop `for int i = a; i < b; ++i` so it can
+-- map to Lua's numeric for (a dedicated, faster opcode). Returns var, start,
+-- limit, op or nil. Conservative: numeric for fixes the counter and limit at
+-- entry, so require an int counter stepping by +1 and a body that assigns
+-- neither the counter nor any variable in the limit.
+local function counting_loop(cx, node)
+	local init = node.init
+	if init.type or #init ~= 1 then return nil end -- one decl, not an expr
+	local d = init[1]
+	if not d.value then return nil end
+	if not is_int_type(cx, d.varType and d.varType.name) then return nil end
+	local var = d.name
+
+	local c = node.cond -- var < limit  /  var <= limit
+	if c.type ~= "binary" or (c.op ~= "<" and c.op ~= "<=") then return nil end
+	if c.left.type ~= "identifier" or c.left.name ~= var then return nil end
+	local limit = c.right
+	if not is_int(cx, limit) then return nil end
+
+	local u = node.update -- var = var + 1  (also ++var, var += 1)
+	if u.type ~= "binary" or u.op ~= "=" then return nil end
+	if u.left.type ~= "identifier" or u.left.name ~= var then return nil end
+	local r = u.right
+	if r.type ~= "binary" or r.op ~= "+" then return nil end
+	local plus_one = (
+		r.left.type == "identifier"
+		and r.left.name == var
+		and r.right.type == "literal"
+		and r.right.value == 1
+	)
+		or (
+			r.right.type == "identifier"
+			and r.right.name == var
+			and r.left.type == "literal"
+			and r.left.value == 1
+		)
+	if not plus_one then return nil end
+
+	local names = expr_names(limit, { [var] = true })
+	if assigns_name(node.body, names) then return nil end
+	return var, d.value, limit, c.op
+end
+
 -- a for-init is either a decl list (looped, never destructured) or one statement
 function emit_for_init(cx, init, cl)
 	if not init.type then
@@ -353,23 +426,7 @@ function emit_stmt(cx, node, cl)
 		end
 		push(cx, "end")
 	elseif t == "for" then
-		push(cx, "do")
-		cx.ind = cx.ind + 1
-		emit_for_init(cx, node.init, cl)
-		local mycl = newcont(cx)
-		push(cx, "while " .. Econd(cx, node.cond) .. " do")
-		cx.ind = cx.ind + 1
-		push(cx, "do")
-		cx.ind = cx.ind + 1 -- body scope: keeps goto legal
-		block(cx, node.body, mycl)
-		cx.ind = cx.ind - 1
-		push(cx, "end")
-		push(cx, "::" .. mycl .. "::")
-		emit_stmt(cx, node.update, cl)
-		cx.ind = cx.ind - 1
-		push(cx, "end")
-		cx.ind = cx.ind - 1
-		push(cx, "end")
+		emit_for(cx, node, cl)
 	elseif t == "forin" then
 		local decl = node.init[1]
 		push(cx, "do")
@@ -412,6 +469,48 @@ function emit_stmt(cx, node, cl)
 	else
 		error("transpile stmt: unhandled " .. tostring(t))
 	end
+end
+
+function emit_for(cx, node, cl)
+	local var, start, limit, op = counting_loop(cx, node)
+	if var then
+		-- numeric for: faster FORLOOP opcode. `<` is exclusive but Lua's for is
+		-- inclusive, so cap at limit-1 (safe: int counter, +1 step).
+		local hi = E(cx, limit)
+		if op == "<" then hi = "(" .. hi .. ") - 1" end
+		cx.typeenv[var] = "int" -- counter type, for is_int in the body
+		push(cx, "for " .. var .. " = " .. E(cx, start) .. ", " .. hi .. " do")
+		cx.ind = cx.ind + 1
+		local mycl = newcont(cx)
+		push(cx, "do") -- body scope: keeps a continue's goto legal
+		cx.ind = cx.ind + 1
+		block(cx, node.body, mycl)
+		cx.ind = cx.ind - 1
+		push(cx, "end")
+		push(cx, "::" .. mycl .. "::") -- continue lands here; for then steps
+		cx.ind = cx.ind - 1
+		push(cx, "end")
+		return
+	end
+
+	-- general C-style loop: a while with the init/update spelled out
+	push(cx, "do")
+	cx.ind = cx.ind + 1
+	emit_for_init(cx, node.init, cl)
+	local mycl = newcont(cx)
+	push(cx, "while " .. Econd(cx, node.cond) .. " do")
+	cx.ind = cx.ind + 1
+	push(cx, "do")
+	cx.ind = cx.ind + 1 -- body scope: keeps goto legal
+	block(cx, node.body, mycl)
+	cx.ind = cx.ind - 1
+	push(cx, "end")
+	push(cx, "::" .. mycl .. "::")
+	emit_stmt(cx, node.update, cl)
+	cx.ind = cx.ind - 1
+	push(cx, "end")
+	cx.ind = cx.ind - 1
+	push(cx, "end")
 end
 
 function emit_switch(cx, node, cl)
