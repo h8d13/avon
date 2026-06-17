@@ -4,19 +4,22 @@
 
 Welcome to `avon` a transpiler, it takes `.nova` code as input passes it through a `parser` and emits `lua` compiled byte-code directly.
 
-**Requires** Lua 5.3/5.4  or LuaJIT (not vanilla 5.1, the output uses `goto`). Run it under LuaJIT for ~5–14× on hot code: `luajit ./nova prog.nova`. Note: under LuaJIT (doubles only) integers are exact to 2⁵³ and bitwise is 32-bit; Lua 5.4 gives full 64-bit.
+**Requires** Lua 5.3/5.4  or LuaJIT (not vanilla 5.1, the output uses `goto`).
+Run it under LuaJIT for ~5–14× on hot code: `luajit ./nova prog.nova`.
 
-# 🛰️ Nova Language Syntax Sheet
+> Note: under LuaJIT (doubles only) integers are exact to 2⁵³ and bitwise is 32-bit; Lua 5.4 gives full 64-bit.
 
-Nova is a modern simplified C++ built on Lua, designed for clarity and modern expression. It uses `fn` for function declarations, first class multiple return times and omits parentheses for conditional statements, and optional curly braces for single expression functions, too.
+# 🛰️ NAvon Language Syntax Sheet
+
+`avon` is a modern simplified C++ built on Lua, designed for clarity and modern expression.
+It uses `fn` for function declarations, first class multiple return times and omits parentheses for conditional statements, and optional curly braces for single expression functions, too.
 
 ---
 
 ## 📃 Comments
 
-```lua
--- Singe
-// line comments
+```cpp
+// Single line comments
 
 /*
   Multi-line
@@ -39,7 +42,7 @@ try      catch    except   throw
 
 ## 🔤 Literals
 
-```nova
+```cpp
 123         // integer
 3.14        // float
 "hello"     // string
@@ -52,7 +55,7 @@ null        // null value
 
 ## 🧮 Operators
 
-```nova
+```
 +   -   *   /   %         // arithmetic
 ==  !=  <   >   <=  >=    // comparison
 &&  ||  !                 // logical
@@ -64,7 +67,7 @@ null        // null value
 
 ## 🏗️ Functions
 
-```nova
+```cpp
 fn main() {
   print("Hello, " + name)
 }
@@ -72,14 +75,14 @@ fn main() {
 
 *curly braces are optional for single expressions for functions, too*
 
-```nova
+```cpp
 fn main()
   print("Hello, " + name)
 ```
 
 natively supports multiple return values just likr arguments, too
 
-```nova
+```cpp
 fn int, int test(int x, int y)
   return x, y
 
@@ -92,7 +95,7 @@ int v, error = test(x, y)
 
 ### If/Else
 
-```nova
+```cpp
 if x > 0 {
   print("Positive")
 } else {
@@ -102,7 +105,7 @@ if x > 0 {
 
 ### For (one one way to loop)
 
-```nova
+```cpp
 for int i = 0; i < 10; ++i {
   print(i)
 }
@@ -110,7 +113,7 @@ for int i = 0; i < 10; ++i {
 
 *for iterators and generators, too*
 
-```nova
+```cpp
 for string s = it.next() {
   print(i)
 }
@@ -122,7 +125,7 @@ for string s = it.next() {
 
 ### Enum
 
-```nova
+```cpp
 enum Color {
   Red,
   Green,
@@ -134,7 +137,7 @@ enum Color {
 
 Fixed-size arrays declare with `[N]` after the type, index with `[i]`.
 
-```nova
+```cpp
 int[10] xs;
 xs[0] = 1;
 int v = xs[i + 1];
@@ -142,7 +145,7 @@ int v = xs[i + 1];
 
 Indexing chains for nested arrays and call results.
 
-```nova
+```cpp
 int v = grid[a][b];
 int w = row()[0];
 ```
@@ -151,7 +154,7 @@ int w = row()[0];
 
 ## 🧩 Match Expression
 
-```nova
+```cpp
 switch color {
   case Red:
     print("Stop")
@@ -171,14 +174,14 @@ spelled `try`/`except`).
 
 ### Throwing an Exception
 
-```nova
+```cpp
 fn risky()
   throw "Something went wrong"
 ```
 
 ### Catching Exceptions
 
-```nova
+```cpp
 fn main() {
   try
     risky()
@@ -194,7 +197,7 @@ fn main() {
 
 `import <module> as <alias>` binds the same module under a different prefix:
 
-```nova
+```cpp
 import math as m
 
 fn int hypot(int a, int b) {
@@ -205,7 +208,7 @@ fn int hypot(int a, int b) {
 A `luarocks` package is no different -- install it so it's on Lua's path,
 then `import` it (run under the Lua version the rock was built for):
 
-```nova
+```cpp
 import cjson
 
 fn str roundtrip() {

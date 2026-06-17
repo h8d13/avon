@@ -1,6 +1,6 @@
 -- Literal + string edge cases: char literals as int codes (incl. escapes),
 -- float arithmetic, string concatenation with mixed operands, and comment
--- forms (--, //, /* */) being ignored by the lexer.
+-- forms (//, /* */) being ignored by the lexer.
 local E = require("tests/eval")
 
 local function eq(src, expected, label)
@@ -34,9 +34,8 @@ do
   if out[1] ~= "n=42" then error("string+int: got " .. tostring(out[1])) end
 end
 
--- all three comment forms are skipped by the lexer: dash, slash, and block
+-- both comment forms are skipped by the lexer: slash line and block
 eq([[
-  -- dash line comment
   // slash line comment
   /* block
      comment */

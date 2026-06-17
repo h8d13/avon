@@ -75,12 +75,6 @@ function Tokenizer:next()
       i = i + 2
       while i <= len and input:sub(i, i) ~= "\n" do i = i + 1 end
 
-    -- dash line comment: `--` is a comment (Lua/README style), never a
-    -- decrement operator, so there is no `--x`. `++` stays as increment.
-    elseif c == "-" and input:sub(i+1, i+1) == "-" then
-      i = i + 2
-      while i <= len and input:sub(i, i) ~= "\n" do i = i + 1 end
-
     -- block comment
     elseif c == "/" and input:sub(i+1, i+1) == "*" then
       i = i + 2

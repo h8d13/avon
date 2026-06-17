@@ -1,2 +1,4 @@
-# anything .nova render as lua in gh/other providers
-*.nova linguist-language=Lua
+# render .nova as C++ on GitHub/other providers: Nova is C-family (braces,
+# // and /* */ comments, C operators, types, switch/case, try/catch), so C++
+# is the closest Linguist grammar. `fn` renders as a plain identifier.
+*.nova linguist-language=C++
