@@ -15,8 +15,31 @@ end
 eq("fn int main() { if 1 > 0 { return 10 } else { return 20 } }", 10, "if braced true")
 eq("fn int main() { if 1 < 0 { return 10 } else { return 20 } }", 20, "else branch")
 eq("fn int main() { if 1 > 0 return 10; return 20 }", 10, "if braceless single stmt")
--- brace-less then-branches must be `;`-terminated before `else`/next stmt
--- (see eval_unsupported.lua for the un-terminated form that mis-parses).
+-- a brace-less branch is exactly one statement, terminator or not: the `;` is
+-- optional and the branch never swallows the statement that follows it
+eq(
+	[[
+  fn int fact(int n) {
+    if n <= 1 return 1
+    return n * fact(n - 1)
+  }
+  fn int main() { return fact(5) }
+]],
+	120,
+	"brace-less if does not swallow the next statement"
+)
+-- brace-less `if ... else` works without a `;` before `else`
+eq(
+	[[
+  fn int m(int x) {
+    if x > 0 return 1
+    else return 0
+  }
+  fn int main() { return m(5) * 10 + m(-3) }
+]],
+	10,
+	"brace-less if/else without semicolon"
+)
 eq(
 	[[
   fn int classify(int x) {

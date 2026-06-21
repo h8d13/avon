@@ -59,9 +59,10 @@ func int add(int a, int b) {
 
 `target` is a keyword (the rewrite is treated as that keyword) or any other
 identifier such as a host/user function name (the rewrite stays an
-identifier). Targets are not checked against any symbol table, so a typo in a
-function target surfaces as a runtime nil-call, not a parse error. An alias
-may not be an existing keyword.
+identifier). A non-keyword target must still resolve to something real (a
+function, a host name, a binding): the rewritten name goes through the same
+unbound-name check as any identifier, so a typo'd function target is a compile
+error, not a silent runtime nil-call. An alias may not be an existing keyword.
 
 The marker itself is rebindable. `<marker>pragma = <punct>` (or the short
 `<marker>pg = <punct>`) switches it for the lines that follow, so you can trade

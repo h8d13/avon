@@ -96,7 +96,8 @@ local function pat_escape(s) return (s:gsub("(%W)", "%%%1")) end
 -- line:col reporting stay accurate. Runs once at construction, before scanning.
 -- `target` may be a keyword (rewrite classifies as that keyword) or any other
 -- identifier such as a host/user function name (rewrite stays an identifier);
--- non-keyword targets are unchecked, so a typo surfaces as a runtime nil-call.
+-- a non-keyword target rides the codegen unbound-name check, so a typo'd target
+-- is a compile error, not a runtime nil-call.
 --
 -- The marker starts as `__` and is itself rebindable: `<marker>pragma = <punct>`
 -- switches the marker for the lines that follow (`__pragma = $$` then `$$fn =
@@ -365,6 +366,9 @@ function Parser:nud(tok)
 	elseif tok.type == TokenType.Ident then
 		if tok.value == "true" then return { type = "literal", value = 1 } end
 		if tok.value == "false" then return { type = "literal", value = 0 } end
+		-- `null` is a real literal (emits Lua nil), not an unbound name that
+		-- happens to read as nil -- so a mistyped identifier no longer aliases it
+		if tok.value == "null" then return { type = "null" } end
 		-- qualified name: module.func (e.g. math.sqrt, cjson.encode)
 		local name = tok.value
 		while self:peek().value == "." do
@@ -644,18 +648,22 @@ function Parser:parse_case_body()
 end
 
 function Parser:parse_block()
-	local one = self:peek().value ~= "{"
-	if not one then self:expect("{") end
+	-- brace-less form is exactly one statement (a `;` may terminate it but is
+	-- not required). Looping until `}` here would let an un-terminated branch
+	-- swallow the statements that follow it, so stop after the one.
+	if self:peek().value ~= "{" then
+		local stmt = self:parse_statement()
+		if self:peek().value == ";" then self:next() end
+		return { stmt }
+	end
 
+	self:expect("{")
 	local body = {}
 	while self:peek().value ~= "}" do
 		body[#body + 1] = self:parse_statement()
-		if self:peek().value == ";" then
-			self:next()
-			if one then break end
-		end
+		if self:peek().value == ";" then self:next() end
 	end
-	if not one then self:expect("}") end
+	self:expect("}")
 	return body
 end
 

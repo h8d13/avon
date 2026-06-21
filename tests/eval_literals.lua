@@ -10,6 +10,19 @@ local function eq(src, expected, label)
 	end
 end
 
+-- boolean literals lower to 1/0 and stay usable as ints and as conditions
+eq("fn int main() { return true }", 1, "true is 1")
+eq("fn int main() { return false }", 0, "false is 0")
+eq("fn int main() { return !false }", 1, "not false")
+eq("fn int main() { if true { return 5 } return 9 }", 5, "true as condition")
+
+-- `null` has no literal token: it resolves as an unbound name, i.e. Lua nil.
+-- The entry's `or 0` would mask that, so assert through a captured print.
+do
+	local _, out = E.run("fn int main() { print(null); return 0 }")
+	if out[1] ~= "nil" then error("null prints nil: got " .. tostring(out[1])) end
+end
+
 -- char literals lower to their integer code
 eq("fn int main() { return 'A' }", 65, "char code A")
 eq("fn int main() { return 'a' - 'A' }", 32, "char arithmetic")

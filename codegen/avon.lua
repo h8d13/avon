@@ -102,6 +102,36 @@ function args_str(cx, list)
 	return table.concat(t, ", ")
 end
 
+-- collect every name a function binds: params (added by the caller) plus every
+-- `decl` -- locals, array decls, for-/forin-init and decl-list members are all
+-- stamped type="decl" by the parser -- and every catch variable, walked deep so
+-- names bound inside nested blocks count. Function-wide rather than block-scoped
+-- on purpose: that leniency can only MISS a stale-use error, never wrongly
+-- reject a name that is in fact bound somewhere in the function.
+local function collect_bound(node, set)
+	if type(node) ~= "table" then return end
+	if node.type == "decl" then set[node.name] = true end
+	if node.type == "try" then set[node.catchVar] = true end
+	for _, v in pairs(node) do
+		collect_bound(v, set)
+	end
+end
+
+-- a bare Nova name must resolve to something real: a local/param/loop/catch
+-- var, an enum constant, a user function, or a host name reachable through the
+-- compile env (which chains to _G). Anything else is a typo that would otherwise
+-- read as a silent nil -- a nil value, or a nil-call -- at run time, so reject
+-- it at compile time. Only the leading segment of a dotted name is checked:
+-- `a.b.c` rides on `a` resolving to a module/table. Skips entirely when no env
+-- is wired (a direct Avon.compile with no host environment to check against).
+local function check_name(cx, name)
+	if not cx.env then return end
+	local base = name:match("^[^.]+")
+	if cx.bound[base] or cx.consts[base] ~= nil or cx.funcs[base] then return end
+	if cx.env[base] ~= nil then return end
+	error("unknown name '" .. base .. "'")
+end
+
 function E(cx, node)
 	local t = node.type
 	if t == "literal" then
@@ -109,7 +139,10 @@ function E(cx, node)
 			return string.format("%q", node.value)
 		end
 		return tostring(node.value)
+	elseif t == "null" then
+		return "nil"
 	elseif t == "identifier" then
+		check_name(cx, node.name)
 		local c = cx.consts[node.name]
 		if c ~= nil then return tostring(c) end
 		return node.name
@@ -138,6 +171,7 @@ function E(cx, node)
 		-- expression position (matches the VM taking result slot 0);
 		-- destructure and bare-call-statement build their own call text and
 		-- keep all values
+		if node.name then check_name(cx, node.name) end
 		local fn = node.name or ("(" .. E(cx, node.callee) .. ")")
 		return "(" .. fn .. "(" .. args_str(cx, node.args) .. "))"
 	elseif t == "member" then
@@ -321,6 +355,7 @@ end
 function emit_decl_list(cx, decls)
 	if is_destructure(decls) then
 		local call = decls[#decls].value
+		if call.name then check_name(cx, call.name) end
 		local ns = {}
 		for i, d in ipairs(decls) do
 			ns[i] = d.name
@@ -456,6 +491,7 @@ function emit_stmt(cx, node, cl)
 			push(cx, "local _ = " .. E(cx, node)) -- bare expression (rare)
 		end
 	elseif t == "call" then
+		if node.name then check_name(cx, node.name) end
 		local fn = node.name or ("(" .. E(cx, node.callee) .. ")")
 		push(cx, fn .. "(" .. args_str(cx, node.args) .. ")")
 	elseif t == "index" or t == "identifier" or t == "literal" then
@@ -661,11 +697,14 @@ local function emit_function(cx, n, min_args)
 	-- fresh scalar-type scope; param types seed is_int (param.type is a bare
 	-- type-name string in the parser)
 	cx.typeenv = {}
+	cx.bound = {} -- fresh bound-name scope for the unbound-name check
 	local ps = {}
 	for i, p in ipairs(n.params) do
 		ps[i] = p.name
 		cx.typeenv[p.name] = scalar_tag(cx, p.type)
+		cx.bound[p.name] = true
 	end
+	collect_bound(n.body, cx.bound)
 	push(cx, "function " .. n.name .. "(" .. table.concat(ps, ", ") .. ")")
 	cx.ind = cx.ind + 1
 	-- default a missing arg to 0 (the VM zero-filled unbound params), but only
@@ -730,7 +769,7 @@ local function emit_prelude(cx)
 	push(cx, "local __NORET = {}") -- sentinel: a try body that returned no value
 end
 
-function Avon.compile(body)
+function Avon.compile(body, env)
 	local cx = {
 		buf = {},
 		ind = 0,
@@ -739,6 +778,9 @@ function Avon.compile(body)
 		ret_int = {}, -- user function name -> first return type is int?
 		ret_str = {}, -- user function name -> first return type is str?
 		typeenv = {}, -- per-function scalar types, reset before each function
+		funcs = {}, -- every user function name (for the unbound-name check)
+		bound = {}, -- names bound in the current function, reset per function
+		env = env, -- host environment (chains to _G); nil = skip name checks
 		labelc = 0,
 		subjc = 0,
 		tryc = 0,
@@ -757,6 +799,7 @@ function Avon.compile(body)
 			local rt = n.returnTypes and n.returnTypes[1]
 			cx.ret_int[n.name] = is_int_type(cx, rt)
 			cx.ret_str[n.name] = is_str_type(cx, rt)
+			cx.funcs[n.name] = true
 		end
 	end
 
@@ -787,7 +830,7 @@ end
 -- back to globals); returns a table mapping function name -> Lua function.
 function Avon.load(body, env)
 	env = setmetatable(env or {}, { __index = _G })
-	local src = Avon.compile(body)
+	local src = Avon.compile(body, env)
 	local chunk, err
 	if setfenv then -- Lua 5.1 / LuaJIT: no env arg on load, set it explicitly
 		chunk, err = load(src, "=nova")
