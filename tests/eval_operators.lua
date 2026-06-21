@@ -16,11 +16,17 @@ eq(main("2 + 3 * 4"), 14, "mul before add")
 eq(main("20 - 5 - 3"), 12, "sub left assoc")
 eq(main("(2 + 3) * 4"), 20, "parens override")
 
--- integer division truncates toward zero; modulo sign follows dividend
+-- integer division truncates toward zero; modulo sign follows dividend. The
+-- helpers inline the sign-aware round (no __trunc hop), so the negative cases
+-- below pin that truncation -- not flooring -- survives in every sign quadrant.
 eq(main("7 / 2"), 3, "int div trunc")
 eq(main("-7 / 2"), -3, "neg int div trunc toward zero")
+eq(main("7 / -2"), -3, "pos/neg div trunc toward zero")
+eq(main("-7 / -2"), 3, "neg/neg div trunc toward zero")
 eq(main("7 % 3"), 1, "mod")
 eq(main("-7 % 3"), -1, "neg mod follows dividend")
+eq(main("7 % -3"), 1, "pos mod neg divisor follows dividend")
+eq(main("-7 % -3"), -1, "neg mod neg divisor follows dividend")
 
 -- comparison yields 1/0, usable as int
 eq(main("3 < 5"), 1, "lt true is 1")

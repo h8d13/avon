@@ -753,11 +753,19 @@ end
 local function emit_prelude(cx)
 	if JIT then push(cx, "local bit = require('bit')") end
 	push(cx, "local __floor, __ceil, __fmod = math.floor, math.ceil, math.fmod")
-	push(cx, "local function __trunc(x)")
-	push(cx, "  if x >= 0 then return __floor(x) else return __ceil(x) end")
+	-- round toward zero, inlined into both helpers: a separate __trunc would add
+	-- a Lua call to every int / and % (3-deep chain vs 2), and on the
+	-- interpreted 5.3/5.4 path that is ~a third of the calls on div/mod-heavy
+	-- code. q >= 0 picks floor, else ceil -- truncation toward zero, the C `/`.
+	push(cx, "local function __idiv(a, b)")
+	push(cx, "  local q = a / b")
+	push(cx, "  if q >= 0 then return __floor(q) else return __ceil(q) end")
 	push(cx, "end")
-	push(cx, "local function __idiv(a, b) return __trunc(a / b) end")
-	push(cx, "local function __imod(a, b) return a - __trunc(a / b) * b end")
+	push(cx, "local function __imod(a, b)")
+	push(cx, "  local q = a / b")
+	push(cx, "  local t = q >= 0 and __floor(q) or __ceil(q)")
+	push(cx, "  return a - t * b")
+	push(cx, "end")
 	-- table.pack/unpack are 5.2+; LuaJIT (5.1) needs the fallbacks
 	push(
 		cx,
