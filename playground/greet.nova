@@ -5,5 +5,8 @@ fn int main() {
 	str place = "World!";
 	print(greet,place); // this would return with tab as a seperator. as per lua.
 	print(greet + place) // this results in the two strings being combined
+	// -- lua comment style is not supported
+	/* block comments follow C, C++, style
+	this is still a comment line. */
 	return 0
 }
