@@ -132,8 +132,9 @@ function Tokenizer:extract_pragmas(input)
 			-- alias/marker effects gathered so far go uncommitted). The marker can
 			-- be rebound mid-line, so segments resolve left to right.
 			local m, pending = marker, {}
-			for seg in (code .. ";"):gmatch("([^;]*);") do
-				seg = seg:match("^%s*(.-)%s*$") -- trim
+			for raw in (code .. ";"):gmatch("([^;]*);") do
+				-- trim into a fresh local: loop vars are const in Lua 5.5
+				local seg = raw:match("^%s*(.-)%s*$")
 				if seg ~= "" then
 					local kind, a, b = classify_pragma(seg, m)
 					if kind == "rebind" then
@@ -755,7 +756,9 @@ end
 
 function Parser:parse_declaration()
 	local decls = self:parse_decl_list()
-	self:expect(";")
+	-- ';' optional, like every other statement (the block/program loops
+	-- consume a trailing one anyway)
+	if self:peek().value == ";" then self:next() end
 	return decls -- a list (no .type); gen_statement walks / destructures it
 end
 

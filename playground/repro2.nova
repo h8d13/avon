@@ -1,9 +1,10 @@
 // braces optional for single-statement bodies, with or without aliases.
 
 __pragma = $$
-$$fn = f
-$$return = r
+$$return = ret
 
-f int mod() r 10
-
-f int main() r 40 * mod() + 20
+int times = 10; // declerations do not require a ";"
+// you can even put several on a single line with them.
+int fourty = 40 int twenty = 20
+// otherwise you can split them per-line or add the ";" for style
+fn int main() { ret fourty * times + twenty }

@@ -331,10 +331,12 @@ function E_binary(cx, node)
 end
 
 function emit_decl(cx, d)
+	-- file-scope decls are forward-declared locals: assign, don't re-declare
+	local pre = cx.filedecl and "" or "local "
 	if d.varType and d.varType.type == "arraytype" then
 		cx.typeenv[d.name] = is_int_type(cx, d.varType.base) and "arr:int"
 			or "arr:float"
-		push(cx, "local " .. d.name .. " = setmetatable({}, __ZERO)")
+		push(cx, pre .. d.name .. " = setmetatable({}, __ZERO)")
 	else
 		local tag = scalar_tag(cx, d.varType and d.varType.name)
 		cx.typeenv[d.name] = tag
@@ -342,10 +344,7 @@ function emit_decl(cx, d)
 		local default = tag == "str" and '""' or "0"
 		push(
 			cx,
-			"local "
-				.. d.name
-				.. " = "
-				.. (d.value and E(cx, d.value) or default)
+			pre .. d.name .. " = " .. (d.value and E(cx, d.value) or default)
 		)
 	end
 end
@@ -359,10 +358,11 @@ function emit_decl_list(cx, decls)
 		local ns = {}
 		for i, d in ipairs(decls) do
 			ns[i] = d.name
+			cx.typeenv[d.name] = scalar_tag(cx, d.varType and d.varType.name)
 		end
 		push(
 			cx,
-			"local "
+			(cx.filedecl and "" or "local ")
 				.. table.concat(ns, ", ")
 				.. " = "
 				.. (call.name or ("(" .. E(cx, call.callee) .. ")"))
@@ -695,9 +695,14 @@ end
 -- emit one Nova function: signature, missing-arg defaults, body, fallthrough
 local function emit_function(cx, n, min_args)
 	-- fresh scalar-type scope; param types seed is_int (param.type is a bare
-	-- type-name string in the parser)
+	-- type-name string in the parser). File-scope vars seed both scopes:
+	-- visible everywhere, params/locals shadow them
 	cx.typeenv = {}
 	cx.bound = {} -- fresh bound-name scope for the unbound-name check
+	for k, v in pairs(cx.filevars) do
+		cx.typeenv[k] = v
+		cx.bound[k] = true
+	end
 	local ps = {}
 	for i, p in ipairs(n.params) do
 		ps[i] = p.name
@@ -813,16 +818,45 @@ function Avon.compile(body, env)
 
 	emit_prelude(cx)
 
-	-- forward-declare every function name so call order / mutual recursion work
-	local names = {}
+	-- forward-declare every function name so call order / mutual recursion
+	-- work; file-scope var names join them so function bodies capture them
+	-- as upvalues (a top-level decl list is a body entry with no .type)
+	local names, fwd = {}, {}
 	for _, n in ipairs(body) do
-		if n.type == "function" then names[#names + 1] = n.name end
+		if n.type == "function" then
+			names[#names + 1] = n.name
+			fwd[#fwd + 1] = n.name
+		elseif not n.type then
+			for _, d in ipairs(n) do
+				fwd[#fwd + 1] = d.name
+			end
+		end
 	end
-	if #names > 0 then push(cx, "local " .. table.concat(names, ", ")) end
+	if #fwd > 0 then push(cx, "local " .. table.concat(fwd, ", ")) end
+
+	-- file-scope decls render into a side buffer FIRST (fills typeenv/bound
+	-- so function bodies type them), but splice into the chunk AFTER the
+	-- function definitions, so an initializer may call user functions
+	for _, n in ipairs(body) do
+		if not n.type then collect_bound(n, cx.bound) end
+	end
+	local chunk = cx.buf
+	cx.buf = {}
+	cx.filedecl = true
+	for _, n in ipairs(body) do
+		if not n.type then emit_decl_list(cx, n) end
+	end
+	cx.filedecl = nil
+	local decl_lines = cx.buf
+	cx.buf = chunk
+	cx.filevars = cx.typeenv
 
 	local min_args = scan_min_args(body)
 	for _, n in ipairs(body) do
 		if n.type == "function" then emit_function(cx, n, min_args) end
+	end
+	for _, line in ipairs(decl_lines) do
+		cx.buf[#cx.buf + 1] = line
 	end
 
 	local kv = {}

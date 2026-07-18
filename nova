@@ -1,4 +1,4 @@
-#!/usr/bin/env lua5.4
+#!/usr/bin/env lua
 -- Nova runner: parse a .nova file, transpile it to Lua, execute it.
 -- Usage: ./nova <file.nova> [--entry name] [int args...]
 --   --entry  function to call (default: main)
