@@ -1,0 +1,9 @@
+// braces optional for single-statement bodies, with or without aliases.
+
+__pragma = $$
+$$fn = f
+$$return = r
+
+f int mod() r 10
+
+f int main() r 40 * mod() + 20
