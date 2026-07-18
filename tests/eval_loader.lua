@@ -121,4 +121,35 @@ eq(
 	"importer alias does not leak into the module"
 )
 
+-- Loader.run returns the entry AST alongside the modules, and parses the entry
+-- exactly once -- the runner reuses that AST for entry validation rather than
+-- parsing the file a second time at startup.
+do
+	local Parser = require("parser")
+	local real_parse = Parser.parse
+	local parses = 0
+	Parser.parse = function(self)
+		parses = parses + 1
+		return real_parse(self)
+	end
+
+	local root = os.tmpname()
+	os.remove(root)
+	assert(os.execute("mkdir -p " .. root))
+	local fh = assert(io.open(root .. "/main.nova", "w"))
+	fh:write("fn int main() { return 7 }\n")
+	fh:close()
+
+	local ok, mods, ast = pcall(Loader.run, root .. "/main.nova")
+	Parser.parse = real_parse -- restore before any assert can abort
+	os.execute("rm -rf " .. root)
+
+	if not ok then error("Loader.run failed: " .. tostring(mods)) end
+	if parses ~= 1 then error("entry parsed " .. parses .. " times, expected 1") end
+	if not (ast and ast.body) then
+		error("Loader.run did not return the entry AST")
+	end
+	if mods.main() ~= 7 then error("entry not callable from Loader.run mods") end
+end
+
 print("ok")

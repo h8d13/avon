@@ -8,7 +8,6 @@
 local here = arg[0]:match("^(.*)/[^/]*$") or "."
 package.path = here .. "/lang/?.lua;" .. here .. "/codegen/?.lua;" .. package.path
 
-local Parser = require("parser")
 local Loader = require("loader")
 
 local file, entry, callargs = nil, "main", {}
@@ -39,17 +38,16 @@ if not fh then
 	io.stderr:write("nova: cannot open " .. file .. ": " .. openerr .. "\n")
 	os.exit(1)
 end
-local src = fh:read("*a")
-fh:close()
+fh:close() -- existence check only; Loader.run reads and parses the file once
 
 -- The whole parse -> transpile -> run pipeline runs inside one pcall, so any
 -- error() raised in the toolchain, a missing entry, or an uncaught Nova throw
 -- is caught and reported cleanly.
 local ok, result = pcall(function()
-	-- same prelude the loader applies (rooted at the entry file's directory),
-	-- so entry validation sees an aliased `fn` too
-	local root = file:match("^(.*)/[^/]*$") or "."
-	local ast = Parser:new(src, Loader.prelude(root)):parse()
+	-- compile the entry and recursively resolve/link its imports (Nova-file
+	-- modules first, host modules via require). Loader.run hands back the entry
+	-- AST it already parsed, so entry validation below reuses it (no re-parse).
+	local mods, ast = Loader.run(file)
 
 	-- validate the entry point with a helpful list of what's available
 	local funcs = {}
@@ -83,10 +81,8 @@ local ok, result = pcall(function()
 		end
 	end
 
-	-- compile the entry and recursively resolve/link its imports (Nova-file
-	-- modules first, host modules via require), then call the entry function
+	-- call the entry with the (possibly zero-padded) integer args
 	local unpack = table.unpack or unpack -- 5.2+ vs 5.1/LuaJIT
-	local mods = Loader.run(file)
 	return { mods[entry](unpack(callargs)) }
 end)
 

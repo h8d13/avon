@@ -161,9 +161,25 @@ function Tokenizer:extract_pragmas(input)
 	)
 end
 
-local function is_space(c) return c == " " or c == "\n" or c == "\r" or c == "\t" end
-local function is_alpha(c) return c:match("%a") ~= nil or c == "_" end
-local function is_digit(c) return c:match("%d") ~= nil end
+-- Byte-class predicates. The lexer walks the source by byte (string.byte)
+-- instead of slicing a 1-char string and pattern-matching it; over the hot
+-- per-char loops that is ~2x cheaper and allocation-free. Args are byte codes
+-- (or nil past end-of-input, which every predicate treats as false).
+local function is_space(b) -- ' ' \t \n \r
+	return b == 32 or b == 9 or b == 10 or b == 13
+end
+local function is_digit(b) return b ~= nil and b >= 48 and b <= 57 end -- 0-9
+local function is_alpha(b) -- A-Z a-z _
+	return b ~= nil and ((b >= 65 and b <= 90) or (b >= 97 and b <= 122) or b == 95)
+end
+local function is_word(b) return is_alpha(b) or is_digit(b) end
+
+-- single-char byte codes the scanner dispatches on. Derived from the char
+-- literal (not a hand-typed number) so the character stays the source of truth
+-- and can't drift from a comment.
+local SLASH, STAR = string.byte("/"), string.byte("*")
+local DQUOTE, SQUOTE = string.byte('"'), string.byte("'")
+local DOT, NL = string.byte("."), string.byte("\n")
 
 -- Main scan: skip whitespace/comments in place, then hand a token-producing
 -- character to the matching scanner. Each scanner reads/advances self.i and
@@ -172,19 +188,19 @@ function Tokenizer:next()
 	local input, len = self.input, self.len
 	local i = self.i
 	while i <= len do
-		local c = input:sub(i, i)
-		if is_space(c) then
+		local b = input:byte(i)
+		if is_space(b) then
 			i = i + 1
-		elseif c == "/" and input:sub(i + 1, i + 1) == "/" then
+		elseif b == SLASH and input:byte(i + 1) == SLASH then
 			i = self:skip_line_comment(i)
-		elseif c == "/" and input:sub(i + 1, i + 1) == "*" then
+		elseif b == SLASH and input:byte(i + 1) == STAR then
 			i = self:skip_block_comment(i)
 		else
 			self.i = i -- scanners pick up from here
-			if is_digit(c) then return self:scan_number() end
-			if is_alpha(c) then return self:scan_ident() end
-			if c == '"' then return self:scan_string() end
-			if c == "'" then return self:scan_char() end
+			if is_digit(b) then return self:scan_number() end
+			if is_alpha(b) then return self:scan_ident() end
+			if b == DQUOTE then return self:scan_string() end
+			if b == SQUOTE then return self:scan_char() end
 			return self:scan_symbol()
 		end
 	end
@@ -196,7 +212,7 @@ end
 function Tokenizer:skip_line_comment(i)
 	local input, len = self.input, self.len
 	i = i + 2
-	while i <= len and input:sub(i, i) ~= "\n" do
+	while i <= len and input:byte(i) ~= NL do
 		i = i + 1
 	end
 	return i
@@ -206,10 +222,7 @@ end
 function Tokenizer:skip_block_comment(i)
 	local input, len = self.input, self.len
 	i = i + 2
-	while
-		i <= len
-		and not (input:sub(i, i) == "*" and input:sub(i + 1, i + 1) == "/")
-	do
+	while i <= len and not (input:byte(i) == STAR and input:byte(i + 1) == SLASH) do
 		i = i + 1
 	end
 	return i + 2
@@ -220,17 +233,17 @@ function Tokenizer:scan_number()
 	local i = self.i
 	self.last_pos = i
 	local start = i
-	while i <= len and is_digit(input:sub(i, i)) do
+	while i <= len and is_digit(input:byte(i)) do
 		i = i + 1
 	end
 	-- fractional part: a '.' then at least one digit makes it a float. Tag it:
 	-- under Lua 5.1/LuaJIT every number is a double, so the value alone cannot
 	-- tell int from float; the backend needs this for typing.
 	local isFloat = false
-	if input:sub(i, i) == "." and is_digit(input:sub(i + 1, i + 1)) then
+	if input:byte(i) == DOT and is_digit(input:byte(i + 1)) then -- '.' then digit
 		isFloat = true
 		i = i + 1
-		while i <= len and is_digit(input:sub(i, i)) do
+		while i <= len and is_digit(input:byte(i)) do
 			i = i + 1
 		end
 	end
@@ -247,7 +260,7 @@ function Tokenizer:scan_ident()
 	local i = self.i
 	self.last_pos = i
 	local start = i
-	while i <= len and input:sub(i, i):match("[%w_]") do
+	while i <= len and is_word(input:byte(i)) do
 		i = i + 1
 	end
 	local word = input:sub(start, i - 1)
@@ -263,7 +276,7 @@ function Tokenizer:scan_string()
 	self.last_pos = i
 	i = i + 1
 	local start = i
-	while i <= len and input:sub(i, i) ~= '"' do
+	while i <= len and input:byte(i) ~= DQUOTE do
 		i = i + 1
 	end
 	self.i = i + 1

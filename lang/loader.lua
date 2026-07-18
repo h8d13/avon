@@ -110,12 +110,16 @@ local function load_file(path, root, cache, stack, prelude)
 	local mods = Avon.load(ast.body, env)
 	cache[path] = mods
 	stack[path] = nil
-	return mods
+	-- also hand back the parsed AST: the entry caller (Loader.run) reuses it for
+	-- entry validation instead of parsing the file a second time. Recursive
+	-- callers above take only the first return (mods) and ignore it.
+	return mods, ast
 end
 
--- Load `path` and all its transitive Nova imports; returns the entry file's
--- table of functions (name -> Lua function). Dotted imports resolve from the
--- entry file's directory.
+-- Load `path` and all its transitive Nova imports. Returns the entry file's
+-- table of functions (name -> Lua function) AND its parsed AST, so the runner
+-- can validate the entry point without re-parsing. Dotted imports resolve from
+-- the entry file's directory.
 function Loader.run(path)
 	local root = dirname(path)
 	return load_file(path, root, {}, {}, Loader.prelude(root))
