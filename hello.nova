@@ -4,6 +4,12 @@ import math // exposes math.sqrt etc. (a luarocks package imports the same)
 
 typedef int myint;
 
+// file-scope variables: every function sees (and may mutate) them.
+// initializers run after the definitions, so calling id() here is fine;
+// declaration semicolons are optional
+int base = id(100)
+str greeting = "hello"
+
 // enums name integer constants from 0 (X=0, Y=1, Z=2); Vec3 tags an axis
 enum Vec3 { X, Y, Z }
 
@@ -145,7 +151,8 @@ fn int recover() {
 // entry point; `./nova hello.nova` runs this and prints its result
 fn int main() {
 	int q, r = divmod(17, 5); // destructures both results: q=3, r=2
-	return sum(5) + abs(id(-3)) + sign(-42)
+	print(greeting + " from nova"); // file-scope str concatenates
+	return sum(5) + abs(id(-3)) + sign(-42) + base
 		+ max(3, 9) + oddbit(5) + grade(2) + q + r + circle(2) + hyp(3, 4)
 		+ oddsum(20) + safe(-5) + axisweight(Y)
 }

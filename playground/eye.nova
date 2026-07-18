@@ -2,24 +2,25 @@
 			@gsub=W;@sub=Y;@len=N;@char=H;@byte=B;@str=T;@typedef=u;@match=K
 
                         u int i;I os as o;I io as j;I math as m;I string as s
+                         T z=s.H(27);T a=Fm(1);T b=Fm(2);T g=Fm(3);T d=Fm(4)
                                f T dc(T c){r s.H(32+((s.B(c)+23)%95))}
                                  f i C(){r o.e(s.W(",5.*;",".",dc))}
                            f i S(i d){T x=s.W("<5..9H",".",dc);r o.e(x+d)}
                                     f T R(T a){j.X(a)r j.Z("*a")}
-f T Fm(i k){T y=R(s.W("95*B0;8>7-W/;*6.<",".",dc));T a,b,g,d=s.K(y,"(.-)~(.-)~(.-)~(.+)");Q k==1{r a}Q k==2{r b}Q k==3{r g}r d}
+f T Fm(i k){T y=R(s.W("95*B0;8>7-W/;*6.<",".",dc));T a,b,g,d=s.K(y,"(.-)~(.-)~(.-)~(.+)");Q k==1{r a} Q k==2{r b}Q k==3{r g}r d}
 f T pk(){i v=m.q(1,9);Q v<=2{r " "}Q v<=4{r "░"}Q v<=6{r "▒"}Q v<=7{r "▓"}Q v<=8{r "▄"}r "█"}
-f T fl(T c,T d){Q d==""{r c}i n=s.N(c);T a=s.Y(c,1,n-3);T b=s.W(d," *$","");i g2=s.N(d)-s.N(b);T z=s.H(27);T L=a+pk()+pk()+pk();
+      f T fl(T c,T d){Q d==""{r c}i n=s.N(c);T a=s.Y(c,1,n-3);T b=s.W(d," *$","");i g2=s.N(d)-s.N(b);T L=a+pk()+pk()+pk();
 			   Q g2<4{r L+b+z+"[K"}r L+b+pk()+pk()+pk()+z+"[K"}
                                f T V(T x){r s.W(x,"( *)([^\n]*)",fl)}
-                        f i P(T x,i t){T z=s.H(27);T h=z+"[H";p(h+V(x))r S(t)}
+                              f i P(T x,i t){T h=z+"[H";p(h+V(x))r S(t)}
 
                                        f   i look ( i    n
                                    )  { Q n <= 0 { n /**/  =
-                             4 }  T a = Fm /*.................*/
-                           ( 1   ) ; T /*.........*/ b = /**/ Fm (
-                        2 ) ; /*.........Eye of Sauron.............*/
-                       T g /*..........*/   =   Fm    ( 3 ) ; T /*....*/
-                      d = /*........*/   Fm ( /*...*/   4 ) ; /*........*/
+                             4 }  /*..........................*/
+                           /*...................................*/
+                        /*..............Eye of Sauron..............*/
+                       /*.............................................*/
+                      /*................................................*/
                       C ( /*.......*/   ) F /*.......*/  i k = /*.......*/
                         0 ; k < /*..*/ n ;    ++    k {    i z = m . q (
                       5 , /*.......*/  14 )  ; F i w =    0 ; /*........*/
@@ -36,4 +37,4 @@ f T fl(T c,T d){Q d==""{r c}i n=s.N(c);T a=s.Y(c,1,n-3);T b=s.W(d," *$","");i g2
                                         ) r /*......*/
                                             "" }/*/
 
-# not cursed
+# the eye get emptier the more i can complete the language

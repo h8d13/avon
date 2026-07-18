@@ -6,16 +6,18 @@ Welcome to `avon`, a transpiler; takes code as input passes it through a `parser
 
 See https://www.lua.org/manual/5.5/
 
-**Requires** Lua 5.3/5.4  or LuaJIT (not vanilla 5.1, the output uses `goto`).
+**Requires** Lua 5.3+  or LuaJIT (not vanilla 5.1, the output uses `goto`).
 Run it under LuaJIT for ~5–14× on hot code: `luajit ./nova prog.nova`.
 
-> Note: under LuaJIT (doubles only) integers are exact to 2⁵³ and bitwise is 32-bit; Lua 5.4 gives full 64-bit.
+> Note: under LuaJIT (doubles only) integers are exact to 2⁵³ and bitwise is 32-bit; Lua 5.4/5.5 gives full 64-bit.
 
 # Avon - 艾汶
 
 `avon` is a modern simplified C++ built on Lua, designed for clarity and modern expression.
 It uses `fn` for function declarations, first class multiple return times and omits parentheses for conditional statements, and optional curly braces for single expression functions, too.
 Mostly tested only on **Unix** systems.
+
+> It is token based and not indent. It supports `{};` notations without enforcing them.
 
 ---
 
@@ -123,8 +125,12 @@ null        // null value
 
 ## 🏗️ Functions
 
+Return type(s) come after `fn`, before the name, and are required.
+
 ```cpp
-fn main() {
+str name = "Nova";
+
+fn int main() {
 	print("Hello, " + name)
 }
 ```
@@ -139,6 +145,31 @@ fn int, int test(int x, int y)
 
 int v, error = test(x, y)
 ```
+
+---
+
+## 🌍 File-scope variables
+
+Declarations at the top level are file-scope: every function in the file
+sees them, and any function may mutate them. Initializers run once, after
+the functions are defined, so they may call them. Declaration semicolons
+are optional, and several declarations can share a line.
+
+```cpp
+int hits = 0
+str sep = ", "
+int a, b = pair()   // calls a function defined below
+
+fn int, int pair() { return 3, 4 }
+
+fn int bump() {
+	hits += 1;
+	return hits
+}
+```
+
+Params and locals shadow a file-scope name. Like aliases, scope is the
+file: a module exports only its functions, never its variables.
 
 ---
 
