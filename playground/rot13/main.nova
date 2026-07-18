@@ -1,0 +1,49 @@
+// rot13 round-trip harness: Nova modules and Lua internals side by side.
+// run from repo root: ./nova playground/rot13/main.nova
+import rot
+import checks as ck
+import stats as st  // diamond: rot and checks import stats too, one copy
+import os as o
+
+str secret = "Attack at dawn!"  // file-scope, visible in every function
+int t0 = o.time()               // Lua os hit once, at chunk load
+
+enum Verdict { Bad, Ok }
+
+fn int judge(int same) {
+	switch same {
+		case 1: return Ok;
+		default: return Bad;
+	}
+}
+
+fn int main() {
+	// a cross-module call types as numeric (per-file return inference),
+	// so land results in `str` decls before using string `+`
+	str enc = rot.apply(secret);
+	str dec = rot.apply(enc);   // rot13 is its own inverse
+
+	print("cipher: " + enc);
+	print("plain:  " + dec);
+
+	int a = ck.sum(secret);
+	int b = ck.sum(dec);
+	int lo, hi = ck.range(enc); // multi-return destructure across modules
+	print("sum " + a + "/" + b + " bytes " + lo + ".." + hi);
+
+	// accessor-shared scalar: shift() bumped it once per rotated letter
+	// (both apply calls), through the host gsub callback.
+	// array-shared state: checks wrote lo/hi into stats' slot
+	print("letters " + st.total()
+		+ " slot " + st.slot()[0] + ".." + st.slot()[1]);
+
+	int same = dec == secret && a == b ? 1 : 0; // string compare yields 1/0
+	try {
+		if judge(same) != Ok { throw "round trip failed" }
+	} catch e {
+		print("error: " + e);
+		return 1
+	}
+	print("round trip ok in " + (o.time() - t0) + "s");
+	return 0
+}

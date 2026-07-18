@@ -105,6 +105,23 @@ eq(
 	"optional decl semicolons"
 )
 
+-- writing through a call result (`slot()[0] = v`) after another statement:
+-- the emitted '('-led lvalue must not glue onto the previous line as a call
+eq(
+	[[
+  int[2] cells;
+  fn int slot() { return cells }
+  fn int main() {
+    int lo = 5;
+    slot()[0] = lo;
+    slot()[1] = lo + 2;
+    return cells[0] * 10 + cells[1]
+  }
+]],
+	57,
+	"paren-led index assignment after a statement"
+)
+
 -- the unbound-name check still fires on a typo'd file var read
 fails(
 	[[

@@ -1,0 +1,8 @@
+// cross-file mutable state, both sharing patterns: scalars behind
+// accessor functions, bulk state as an array handed out by reference.
+int letters = 0
+int[2] lastrange;
+
+fn int bump() { letters += 1; return letters }
+fn int total() return letters
+fn int slot() return lastrange

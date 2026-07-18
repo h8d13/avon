@@ -1,0 +1,26 @@
+// byte-level checks over strings: djb2-style checksum and byte range.
+import string as s
+import stats as st
+
+fn int sum(str x) {
+	int h = 5381;
+	for int i = 1; i <= s.len(x); ++i {
+		h = (h * 33 + s.byte(x, i)) % 1000000007;
+	}
+	return h
+}
+
+// multiple returns crossing the module boundary back to the entry file
+fn int, int range(str x) {
+	int lo = 255;
+	int hi = 0;
+	for int i = 1; i <= s.len(x); ++i {
+		int b = s.byte(x, i);
+		lo = b < lo ? b : lo;
+		hi = b > hi ? b : hi;
+	}
+	// shared-by-reference: write into stats' array, main reads it back
+	st.slot()[0] = lo;
+	st.slot()[1] = hi;
+	return lo, hi
+}

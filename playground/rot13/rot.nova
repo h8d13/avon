@@ -1,0 +1,21 @@
+// rot13: letters rotate by 13, everything else passes through untouched.
+import string as s
+import stats as st
+
+// gsub's replacement callback: a Nova function passed BY NAME to a host
+// function arrives as a plain Lua function value. char literals are ints.
+// deep edge: host gsub -> Nova fn -> another module's file var mutated
+fn str shift(str c) {
+	st.bump();
+	int b = s.byte(c);
+	if b >= 'a' && b <= 'z' {
+		return s.char('a' + (b - 'a' + 13) % 26)
+	}
+	return s.char('A' + (b - 'A' + 13) % 26)
+}
+
+// gsub returns (string, count); a decl takes the primary value only
+fn str apply(str x) {
+	str out = s.gsub(x, "%a", shift);
+	return out
+}

@@ -155,7 +155,11 @@ function E(cx, node)
 		local r = E(cx, node.right)
 		if node.op == "!" then return "((" .. r .. ") == 0 and 1 or 0)" end
 		if node.op == "~" then
-			return JIT and ("bit.bnot(" .. r .. ")") or ("(~(" .. r .. "))")
+			if JIT then
+				cx.used.bit = true
+				return "bit.bnot(" .. r .. ")"
+			end
+			return "(~(" .. r .. "))"
 		end
 		return "(-(" .. r .. "))"
 	elseif t == "ternary" then
@@ -297,14 +301,17 @@ function E_binary(cx, node)
 	-- int/int truncates toward zero; otherwise real division (static choice)
 	if op == "/" then
 		if is_int(cx, node.left) and is_int(cx, node.right) then
+			cx.used.__idiv = true
 			return "__idiv(" .. L .. ", " .. R .. ")"
 		end
 		return "((" .. L .. ") / (" .. R .. "))"
 	end
 	if op == "%" then
 		if is_int(cx, node.left) and is_int(cx, node.right) then
+			cx.used.__imod = true
 			return "__imod(" .. L .. ", " .. R .. ")"
 		end
+		cx.used.__fmod = true
 		return "__fmod(" .. L .. ", " .. R .. ")"
 	end
 	-- bitwise: operators on 5.3/5.4, the `bit` library on LuaJIT
@@ -316,7 +323,10 @@ function E_binary(cx, node)
 			["<<"] = "lshift",
 			[">>"] = "rshift",
 		}
-		if jb[op] then return "bit." .. jb[op] .. "(" .. L .. ", " .. R .. ")" end
+		if jb[op] then
+			cx.used.bit = true
+			return "bit." .. jb[op] .. "(" .. L .. ", " .. R .. ")"
+		end
 	else
 		local lb = {
 			["&"] = "&",
@@ -336,6 +346,7 @@ function emit_decl(cx, d)
 	if d.varType and d.varType.type == "arraytype" then
 		cx.typeenv[d.name] = is_int_type(cx, d.varType.base) and "arr:int"
 			or "arr:float"
+		cx.used.__ZERO = true
 		push(cx, pre .. d.name .. " = setmetatable({}, __ZERO)")
 	else
 		local tag = scalar_tag(cx, d.varType and d.varType.name)
@@ -465,14 +476,11 @@ end
 function emit_assign(cx, node)
 	local tgt = node.left
 	if tgt.type == "index" then
-		push(
-			cx,
-			E(cx, tgt.array)
-				.. "["
-				.. E(cx, tgt.index)
-				.. "] = "
-				.. E(cx, node.right)
-		)
+		local base = E(cx, tgt.array)
+		-- a '('-led statement glues onto the previous line as a call
+		-- (`x = lo\n(f())[i] = v` parses as `lo(f())`); ';' splits them
+		if base:sub(1, 1) == "(" then base = ";" .. base end
+		push(cx, base .. "[" .. E(cx, tgt.index) .. "] = " .. E(cx, node.right))
 	else
 		push(cx, tgt.name .. " = " .. E(cx, node.right))
 	end
@@ -492,7 +500,8 @@ function emit_stmt(cx, node, cl)
 		end
 	elseif t == "call" then
 		if node.name then check_name(cx, node.name) end
-		local fn = node.name or ("(" .. E(cx, node.callee) .. ")")
+		-- same '('-glue hazard as emit_assign for a callee expression
+		local fn = node.name or (";(" .. E(cx, node.callee) .. ")")
 		push(cx, fn .. "(" .. args_str(cx, node.args) .. ")")
 	elseif t == "index" or t == "identifier" or t == "literal" then
 		push(cx, "local _ = " .. E(cx, node))
@@ -637,6 +646,7 @@ end
 -- allow the trailing `return __NORET` fallthrough.
 function emit_try(cx, node, cl)
 	cx.tryc = cx.tryc + 1
+	cx.used.__pack, cx.used.__unpack, cx.used.__NORET = true, true, true
 	local r = "__try" .. cx.tryc
 	push(cx, "local " .. r .. " = __pack(pcall(function()")
 	cx.ind = cx.ind + 1
@@ -753,33 +763,63 @@ local function scan_min_args(body)
 	return min_args
 end
 
--- emit the prelude: semantic shims, as upvalues (not globals). int division and
--- mod are pre-selected by is_int, so these helpers are unconditional.
+-- emit the prelude: semantic shims, as upvalues (not globals). Rendered AFTER
+-- the body (then spliced in front of it), so only shims the emitters actually
+-- referenced (cx.used) exist in the chunk -- an unused shim is dead weight in
+-- every module's bytecode and heap.
 local function emit_prelude(cx)
-	if JIT then push(cx, "local bit = require('bit')") end
-	push(cx, "local __floor, __ceil, __fmod = math.floor, math.ceil, math.fmod")
+	local u = cx.used
+	if u.bit then push(cx, "local bit = require('bit')") end
+	if u.__idiv or u.__imod then
+		u.__floor, u.__ceil = true, true
+	end
+	local ns, vs = {}, {}
+	for _, m in ipairs({ "floor", "ceil", "fmod" }) do
+		if u["__" .. m] then
+			ns[#ns + 1] = "__" .. m
+			vs[#vs + 1] = "math." .. m
+		end
+	end
+	if #ns > 0 then
+		push(
+			cx,
+			"local "
+				.. table.concat(ns, ", ")
+				.. " = "
+				.. table.concat(vs, ", ")
+		)
+	end
 	-- round toward zero, inlined into both helpers: a separate __trunc would add
 	-- a Lua call to every int / and % (3-deep chain vs 2), and on the
 	-- interpreted 5.3/5.4 path that is ~a third of the calls on div/mod-heavy
 	-- code. q >= 0 picks floor, else ceil -- truncation toward zero, the C `/`.
-	push(cx, "local function __idiv(a, b)")
-	push(cx, "  local q = a / b")
-	push(cx, "  if q >= 0 then return __floor(q) else return __ceil(q) end")
-	push(cx, "end")
-	push(cx, "local function __imod(a, b)")
-	push(cx, "  local q = a / b")
-	push(cx, "  local t = q >= 0 and __floor(q) or __ceil(q)")
-	push(cx, "  return a - t * b")
-	push(cx, "end")
+	if u.__idiv then
+		push(cx, "local function __idiv(a, b)")
+		push(cx, "  local q = a / b")
+		push(cx, "  if q >= 0 then return __floor(q) else return __ceil(q) end")
+		push(cx, "end")
+	end
+	if u.__imod then
+		push(cx, "local function __imod(a, b)")
+		push(cx, "  local q = a / b")
+		push(cx, "  local t = q >= 0 and __floor(q) or __ceil(q)")
+		push(cx, "  return a - t * b")
+		push(cx, "end")
+	end
 	-- table.pack/unpack are 5.2+; LuaJIT (5.1) needs the fallbacks
-	push(
-		cx,
-		"local __pack = table.pack or "
-			.. "function(...) return {n = select('#', ...), ...} end"
-	)
-	push(cx, "local __unpack = table.unpack or unpack")
-	push(cx, "local __ZERO = {__index = function() return 0 end}")
-	push(cx, "local __NORET = {}") -- sentinel: a try body that returned no value
+	if u.__pack then
+		push(
+			cx,
+			"local __pack = table.pack or "
+				.. "function(...) return {n = select('#', ...), ...} end"
+		)
+	end
+	if u.__unpack then push(cx, "local __unpack = table.unpack or unpack") end
+	if u.__ZERO then
+		push(cx, "local __ZERO = {__index = function() return 0 end}")
+	end
+	-- sentinel: a try body that returned no value
+	if u.__NORET then push(cx, "local __NORET = {}") end
 end
 
 function Avon.compile(body, env)
@@ -794,6 +834,7 @@ function Avon.compile(body, env)
 		funcs = {}, -- every user function name (for the unbound-name check)
 		bound = {}, -- names bound in the current function, reset per function
 		env = env, -- host environment (chains to _G); nil = skip name checks
+		used = {}, -- shims the emitters referenced; prelude emits only these
 		labelc = 0,
 		subjc = 0,
 		tryc = 0,
@@ -815,8 +856,6 @@ function Avon.compile(body, env)
 			cx.funcs[n.name] = true
 		end
 	end
-
-	emit_prelude(cx)
 
 	-- forward-declare every function name so call order / mutual recursion
 	-- work; file-scope var names join them so function bodies capture them
@@ -864,6 +903,14 @@ function Avon.compile(body, env)
 		kv[#kv + 1] = nm .. " = " .. nm
 	end
 	push(cx, "return {" .. table.concat(kv, ", ") .. "}")
+
+	-- prelude renders last (cx.used is complete by now) but lands first
+	local body_lines = cx.buf
+	cx.buf = {}
+	emit_prelude(cx)
+	for _, line in ipairs(body_lines) do
+		cx.buf[#cx.buf + 1] = line
+	end
 
 	return table.concat(cx.buf, "\n")
 end

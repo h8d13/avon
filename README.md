@@ -171,6 +171,37 @@ fn int bump() {
 Params and locals shadow a file-scope name. Like aliases, scope is the
 file: a module exports only its functions, never its variables.
 
+The catch: file vars compile to Lua chunk locals, and a module's export
+table is built once -- exporting a variable would copy its value at load
+and go stale on the first mutation. So sharing across files goes through
+functions, exactly like a handwritten Lua module:
+
+```cpp
+// counter.nova -- scalars share through accessors
+int count = 0
+
+fn int get() return count
+fn int bump() { count += 1; return count }
+```
+
+Arrays are Lua tables, passed by reference, so bulk state can be shared
+directly: hand out the array and both files mutate the same storage.
+
+```cpp
+// store.nova
+int[4] cells;
+fn int slot() return cells
+fn int peek() return cells[0]
+
+// main.nova
+import store
+
+fn int main() {
+	store.slot()[0] = 7;     // writes the array store.nova reads
+	return store.peek()      // -> 7
+}
+```
+
 ---
 
 ## 🔁 Control Structures
