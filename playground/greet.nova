@@ -1,8 +1,9 @@
 // two string vars, `+` concatenates when either side is a string
 
 fn int main() {
-	str msg = "Hello, ";
-	str msg2 = "World!";
-	print(msg + msg2);
+	str greet = "Hello, ";
+	str place = "World!";
+	print(greet,place); // this would return with tab as a seperator. as per lua.
+	print(greet + place) // this results in the two strings being combined
 	return 0
 }
