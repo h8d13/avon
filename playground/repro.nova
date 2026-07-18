@@ -1,0 +1,11 @@
+__pragma = $
+$fn     = f
+$return = r
+
+f int mod () {
+	r -2
+}
+
+f int main() {
+	int x = 42 + 5; r x + 20 - mod()
+}
