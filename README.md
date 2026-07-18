@@ -4,6 +4,8 @@
 
 Welcome to `avon`, a transpiler; takes code as input passes it through a `parser` and emits `lua` compiled byte-code directly.
 
+See https://www.lua.org/manual/5.5/
+
 **Requires** Lua 5.3/5.4  or LuaJIT (not vanilla 5.1, the output uses `goto`).
 Run it under LuaJIT for ~5–14× on hot code: `luajit ./nova prog.nova`.
 
@@ -129,7 +131,7 @@ fn main() {
 
 *curly braces are optional for single expressions for functions, too*
 
-natively supports multiple return values just likr arguments, too
+natively supports multiple return values just like arguments, too
 
 ```cpp
 fn int, int test(int x, int y)
