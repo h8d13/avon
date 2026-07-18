@@ -1,0 +1,8 @@
+// two string vars, `+` concatenates when either side is a string
+
+fn int main() {
+	str msg = "Hello, ";
+	str msg2 = "World!";
+	print(msg + msg2);
+	return 0
+}
