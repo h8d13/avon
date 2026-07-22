@@ -162,18 +162,20 @@ function Tokenizer:extract_pragmas(input)
 	)
 end
 
--- Byte-class predicates. The lexer walks the source by byte (string.byte)
+-- Byte-class lookup tables. The lexer walks the source by byte (string.byte)
 -- instead of slicing a 1-char string and pattern-matching it; over the hot
--- per-char loops that is ~2x cheaper and allocation-free. Args are byte codes
--- (or nil past end-of-input, which every predicate treats as false).
-local function is_space(b) -- ' ' \t \n \r
-	return b == 32 or b == 9 or b == 10 or b == 13
+-- per-char loops that is ~2x cheaper and allocation-free. One table index
+-- per byte beats a predicate call with 3-4 comparisons. Entries are dense
+-- booleans (false, not nil) so 1..255 sits in the table's array part; nil
+-- (past end-of-input) indexes as nil, which every use treats as false.
+local IS_SPACE, IS_DIGIT, IS_ALPHA, IS_WORD = {}, {}, {}, {}
+for b = 0, 255 do
+	IS_SPACE[b] = b == 32 or b == 9 or b == 10 or b == 13 -- ' ' \t \n \r
+	IS_DIGIT[b] = b >= 48 and b <= 57 -- 0-9
+	IS_ALPHA[b] = -- A-Z a-z _
+		(b >= 65 and b <= 90) or (b >= 97 and b <= 122) or b == 95
+	IS_WORD[b] = IS_ALPHA[b] or IS_DIGIT[b]
 end
-local function is_digit(b) return b ~= nil and b >= 48 and b <= 57 end -- 0-9
-local function is_alpha(b) -- A-Z a-z _
-	return b ~= nil and ((b >= 65 and b <= 90) or (b >= 97 and b <= 122) or b == 95)
-end
-local function is_word(b) return is_alpha(b) or is_digit(b) end
 
 -- single-char byte codes the scanner dispatches on. Derived from the char
 -- literal (not a hand-typed number) so the character stays the source of truth
@@ -186,11 +188,19 @@ local DOT, NL = string.byte("."), string.byte("\n")
 -- character to the matching scanner. Each scanner reads/advances self.i and
 -- returns one token, so this loop stays a flat dispatch.
 function Tokenizer:next()
+	-- serve the token peek() already scanned; last_pos snaps back to its
+	-- start so error line:col points at this token, exactly as a fresh scan
+	local t = self.ahead
+	if t then
+		self.ahead = nil
+		self.last_pos = self.ahead_pos
+		return t
+	end
 	local input, len = self.input, self.len
 	local i = self.i
 	while i <= len do
 		local b = input:byte(i)
-		if is_space(b) then
+		if IS_SPACE[b] then
 			i = i + 1
 		elseif b == SLASH and input:byte(i + 1) == SLASH then
 			i = self:skip_line_comment(i)
@@ -198,8 +208,8 @@ function Tokenizer:next()
 			i = self:skip_block_comment(i)
 		else
 			self.i = i -- scanners pick up from here
-			if is_digit(b) then return self:scan_number() end
-			if is_alpha(b) then return self:scan_ident() end
+			if IS_DIGIT[b] then return self:scan_number() end
+			if IS_ALPHA[b] then return self:scan_ident() end
 			if b == DQUOTE then return self:scan_string() end
 			if b == SQUOTE then return self:scan_char() end
 			return self:scan_symbol()
@@ -210,23 +220,16 @@ function Tokenizer:next()
 end
 
 -- advance past a `//` line comment; returns the index at end-of-line
+-- (plain find: one C-side scan, no per-byte VM loop)
 function Tokenizer:skip_line_comment(i)
-	local input, len = self.input, self.len
-	i = i + 2
-	while i <= len and input:byte(i) ~= NL do
-		i = i + 1
-	end
-	return i
+	local nl = self.input:find("\n", i + 2, true)
+	return nl or self.len + 1
 end
 
 -- advance past a `/* ... */` block comment; returns the index after `*/`
 function Tokenizer:skip_block_comment(i)
-	local input, len = self.input, self.len
-	i = i + 2
-	while i <= len and not (input:byte(i) == STAR and input:byte(i + 1) == SLASH) do
-		i = i + 1
-	end
-	return i + 2
+	local close = self.input:find("*/", i + 2, true)
+	return close and close + 2 or self.len + 1
 end
 
 function Tokenizer:scan_number()
@@ -234,17 +237,17 @@ function Tokenizer:scan_number()
 	local i = self.i
 	self.last_pos = i
 	local start = i
-	while i <= len and is_digit(input:byte(i)) do
+	while i <= len and IS_DIGIT[input:byte(i)] do
 		i = i + 1
 	end
 	-- fractional part: a '.' then at least one digit makes it a float. Tag it:
 	-- under Lua 5.1/LuaJIT every number is a double, so the value alone cannot
 	-- tell int from float; the backend needs this for typing.
 	local isFloat = false
-	if input:byte(i) == DOT and is_digit(input:byte(i + 1)) then -- '.' then digit
+	if input:byte(i) == DOT and IS_DIGIT[input:byte(i + 1)] then -- '.' then digit
 		isFloat = true
 		i = i + 1
-		while i <= len and is_digit(input:byte(i)) do
+		while i <= len and IS_DIGIT[input:byte(i)] do
 			i = i + 1
 		end
 	end
@@ -262,7 +265,7 @@ function Tokenizer:scan_ident()
 	local i = self.i
 	self.last_pos = i
 	local start = i
-	while i <= len and is_word(input:byte(i)) do
+	while i <= len and IS_WORD[input:byte(i)] do
 		i = i + 1
 	end
 	local word = input:sub(start, i - 1)
@@ -347,17 +350,28 @@ function Tokenizer:scan_symbol()
 	return { type = TokenType.Symbol, value = sym }
 end
 
+-- one-token lookahead cache: peek scans at most once per token; the Pratt
+-- loop peeks the same token repeatedly and next() consumes it, all off the
+-- single scan. `ahead_from` remembers where the scan started so mark() can
+-- rewind to a rescannable position.
 function Tokenizer:peek()
-	local i = self.i
-	local token = self:next()
-	self.i = i
-	return token
+	local t = self.ahead
+	if not t then
+		self.ahead_from = self.i
+		t = self:next()
+		self.ahead = t
+		self.ahead_pos = self.last_pos
+	end
+	return t
 end
 
 -- Backtracking support: capture/restore scan state so callers do not
 -- depend on the internal layout of the tokenizer.
-function Tokenizer:mark() return self.i end
-function Tokenizer:reset(m) self.i = m end
+function Tokenizer:mark() return self.ahead and self.ahead_from or self.i end
+function Tokenizer:reset(m)
+	self.i = m
+	self.ahead = nil
+end
 
 -- 1-based line and column of byte offset `pos`. Defaults to the start of the
 -- most recently scanned token (set in next()), so an error points at the token

@@ -12,6 +12,7 @@ local tests = {
 	"tests/eval_imports.lua",
 	"tests/eval_loader.lua",
 	"tests/eval_pragmas.lua",
+	"tests/eval_tokenizer.lua",
 	"tests/eval_scope.lua",
 	"tests/eval_filescope.lua",
 	"tests/eval_runner.lua",
