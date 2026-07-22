@@ -52,6 +52,20 @@ local JIT = rawget(_G, "jit") ~= nil
 -- ffi fixed arrays are only worth emitting where the JIT compiles them
 local FFI_OK = JIT and pcall(require, "ffi")
 
+-- Deterministic per-source chunk name. Runtime errors are prefixed with it
+-- ("<id>:<generated line>:"), and the emitted __SRC shim matches its OWN
+-- chunk's prefix only -- so an error crossing module boundaries is never
+-- mistranslated through the wrong module's line map. Derived from the
+-- source text (not a counter) so a .novac-cached chunk keeps the same name
+-- across processes.
+local function chunk_id(src)
+	local sum = 0
+	for i = 1, #src, 17 do
+		sum = (sum * 31 + src:byte(i)) % 1000003
+	end
+	return "nova#" .. #src .. "_" .. sum
+end
+
 local cmp = {
 	["<"] = "<",
 	["<="] = "<=",
@@ -67,8 +81,23 @@ local E, E_binary, Econd, is_int, is_str, args_str
 local emit_decl, emit_decl_list, emit_for_init, emit_assign, emit_for
 local emit_stmt, emit_switch, emit_try, block
 
--- append one source line at the current indent
-local function push(cx, s) cx.buf[#cx.buf + 1] = string.rep("  ", cx.ind) .. s end
+-- append one source line at the current indent, recording which Nova source
+-- line it came from (cx.srcline, maintained by emit_stmt) in the parallel
+-- cx.map -- the raw material for the runtime error line map
+local function push(cx, s)
+	local n = #cx.buf + 1
+	cx.buf[n] = string.rep("  ", cx.ind) .. s
+	cx.map[n] = cx.srcline
+end
+
+-- append `lines` (and their map, when given) to the current buffer
+local function append_buf(cx, lines, map)
+	local buf, mp, n = cx.buf, cx.map, #cx.buf
+	for i, line in ipairs(lines) do
+		buf[n + i] = line
+		mp[n + i] = map and map[i] or nil
+	end
+end
 
 -- mint a fresh `continue`-target label
 local function newcont(cx)
@@ -143,6 +172,29 @@ local function at(cx, pos)
 	if not (cx.src and pos) then return "" end
 	local l, c = linecol(cx.src, pos)
 	return l .. ":" .. c .. ": "
+end
+
+-- earliest source offset carried anywhere in a statement's subtree: the
+-- statement's own line for the runtime error map
+local function first_pos(node)
+	if type(node) ~= "table" then return nil end
+	local best = node.pos
+	for _, v in pairs(node) do
+		if type(v) == "table" then
+			local p = first_pos(v)
+			if p and (not best or p < best) then best = p end
+		end
+	end
+	return best
+end
+
+-- memoized source line of a byte offset
+local function src_line(cx, pos)
+	local c = cx.linecache[pos]
+	if c then return c end
+	local l = linecol(cx.src, pos)
+	cx.linecache[pos] = l
+	return l
 end
 
 -- a bare Nova name must resolve to something real: a local/param/loop/catch
@@ -836,6 +888,12 @@ function emit_assign(cx, node)
 end
 
 function emit_stmt(cx, node, cl)
+	-- keep cx.srcline on this statement's source line while it emits;
+	-- position-less statements (bare break/return 0) inherit the last one
+	if cx.src then
+		local p = first_pos(node)
+		if p then cx.srcline = src_line(cx, p) end
+	end
 	if not node.type then return emit_decl_list(cx, node) end -- decl list
 
 	local t = node.type
@@ -1018,8 +1076,8 @@ function emit_try(cx, node, cl)
 		-- render the body function into cx.trybuf (spliced at chunk level
 		-- by compile); a nested hoisted try appends its own def first, so
 		-- inner defs always precede the outer def that calls them
-		local sbuf, sind = cx.buf, cx.ind
-		cx.buf, cx.ind = {}, 0
+		local sbuf, smap, sind = cx.buf, cx.map, cx.ind
+		cx.buf, cx.map, cx.ind = {}, {}, 0
 		push(cx, "local function " .. fn .. "(" .. ps .. ")")
 		cx.ind = 1
 		push(cx, "do")
@@ -1030,10 +1088,12 @@ function emit_try(cx, node, cl)
 		push(cx, "return __NORET")
 		cx.ind = 0
 		push(cx, "end")
-		local def = cx.buf
-		cx.buf, cx.ind = sbuf, sind
-		for _, line in ipairs(def) do
-			cx.trybuf[#cx.trybuf + 1] = line
+		local def, defmap = cx.buf, cx.map
+		cx.buf, cx.map, cx.ind = sbuf, smap, sind
+		local n = #cx.trybuf
+		for i, line in ipairs(def) do
+			cx.trybuf[n + i] = line
+			cx.trymap[n + i] = defmap[i]
 		end
 		push(
 			cx,
@@ -1064,6 +1124,14 @@ function emit_try(cx, node, cl)
 	cx.ind = cx.ind - 1
 	push(cx, "else")
 	cx.ind = cx.ind + 1
+	-- a Nova throw unwraps to its payload; a host/Lua error carries this
+	-- chunk's "name:line:" prefix in GENERATED coordinates -- __SRC rewrites
+	-- it to the Nova source line (needs opts.src for the line map)
+	local raw = vs[1]
+	if cx.src then
+		cx.used.__SRC = true
+		raw = "__SRC(" .. vs[1] .. ")"
+	end
 	push(
 		cx,
 		"local "
@@ -1075,7 +1143,7 @@ function emit_try(cx, node, cl)
 			.. ".nova) and "
 			.. vs[1]
 			.. ".value or "
-			.. vs[1]
+			.. raw
 			.. ")"
 	)
 	block(cx, node.handler, cl)
@@ -1099,6 +1167,7 @@ local function emit_function(cx, n, min_args, fwd)
 	-- type-name string in the parser). File-scope vars seed both scopes:
 	-- visible everywhere, params/locals shadow them
 	cx.typeenv = {}
+	cx.srcline = nil -- scaffolding lines before the first statement: unmapped
 	cx.bound = {} -- fresh bound-name scope for the unbound-name check
 	for k, v in pairs(cx.filevars) do
 		cx.typeenv[k] = v
@@ -1243,6 +1312,24 @@ local function emit_prelude(cx)
 	end
 	-- sentinel: a try body that returned no value
 	if u.__NORET then push(cx, "local __NORET = {}") end
+	-- runtime error translation: rewrite this chunk's own "name:line:"
+	-- prefix (generated coordinates) to the Nova source line via __MAP,
+	-- which compile fills in at the chunk bottom (known only post-assembly)
+	if u.__SRC then
+		push(cx, "local __MAP = {}")
+		push(cx, "local function __SRC(m)")
+		push(cx, "  if type(m) ~= 'string' then return m end")
+		push(
+			cx,
+			'  local ln, rest = m:match("^'
+				.. cx.chunkname
+				.. ':(%d+): (.*)")'
+		)
+		push(cx, "  ln = ln and __MAP[tonumber(ln)]")
+		push(cx, "  if ln then return ln .. ': ' .. rest end")
+		push(cx, "  return m")
+		push(cx, "end")
+	end
 end
 
 function Avon.compile(body, env, opts)
@@ -1264,6 +1351,10 @@ function Avon.compile(body, env, opts)
 			tryhoist = opts.tryhoist ~= false,
 		},
 		src = opts.src, -- Nova source text: line:col in compile errors
+		chunkname = opts.src and chunk_id(opts.src) or "nova",
+		map = {}, -- generated line -> source line, parallel to buf
+		trymap = {}, -- ditto for trybuf
+		linecache = {}, -- byte offset -> source line memo
 		arrsizes = {}, -- ffi array sizes referenced; prelude emits ctors
 		trybuf = {}, -- hoisted try-body functions, spliced at chunk level
 		labelc = 0,
@@ -1355,15 +1446,15 @@ function Avon.compile(body, env, opts)
 	for _, n in ipairs(body) do
 		if not n.type then collect_bound(n, cx.bound) end
 	end
-	local chunk = cx.buf
-	cx.buf = {}
+	local chunk, chunk_map = cx.buf, cx.map
+	cx.buf, cx.map = {}, {}
 	cx.filedecl = true
 	for _, n in ipairs(body) do
 		if not n.type then emit_decl_list(cx, n) end
 	end
 	cx.filedecl = nil
-	local decl_lines = cx.buf
-	cx.buf = chunk
+	local decl_lines, decl_map = cx.buf, cx.map
+	cx.buf, cx.map = chunk, chunk_map
 	cx.filevars = cx.typeenv
 
 	local min_args = scan_min_args(body)
@@ -1372,28 +1463,36 @@ function Avon.compile(body, env, opts)
 			emit_function(cx, n, min_args, needs_fwd[n.name])
 		end
 	end
-	for _, line in ipairs(decl_lines) do
-		cx.buf[#cx.buf + 1] = line
-	end
+	append_buf(cx, decl_lines, decl_map)
 
+	-- prelude renders last (cx.used is complete by now) but lands first;
+	-- then forward decls, hoisted try bodies, functions, file-var inits
+	local body_lines, body_map = cx.buf, cx.map
+	cx.buf, cx.map, cx.srcline = {}, {}, nil
+	emit_prelude(cx)
+	if fwd_line then push(cx, fwd_line) end
+	append_buf(cx, cx.trybuf, cx.trymap)
+	append_buf(cx, body_lines, body_map)
+
+	-- final line numbers are now fixed: fill the runtime error map (read by
+	-- the __SRC shim), then close with the export table
+	if cx.used.__SRC then
+		local gls = {}
+		for gl in pairs(cx.map) do
+			gls[#gls + 1] = gl
+		end
+		table.sort(gls)
+		local kvs = {}
+		for i, gl in ipairs(gls) do
+			kvs[i] = "[" .. gl .. "]=" .. cx.map[gl]
+		end
+		push(cx, "__MAP = {" .. table.concat(kvs, ",") .. "}")
+	end
 	local kv = {}
 	for _, nm in ipairs(names) do
 		kv[#kv + 1] = nm .. " = " .. nm
 	end
 	push(cx, "return {" .. table.concat(kv, ", ") .. "}")
-
-	-- prelude renders last (cx.used is complete by now) but lands first;
-	-- then forward decls, hoisted try bodies, functions, file-var inits
-	local body_lines = cx.buf
-	cx.buf = {}
-	emit_prelude(cx)
-	if fwd_line then push(cx, fwd_line) end
-	for _, line in ipairs(cx.trybuf) do
-		cx.buf[#cx.buf + 1] = line
-	end
-	for _, line in ipairs(body_lines) do
-		cx.buf[#cx.buf + 1] = line
-	end
 
 	return table.concat(cx.buf, "\n")
 end
@@ -1404,12 +1503,15 @@ end
 function Avon.load(body, env, opts)
 	env = setmetatable(env or {}, { __index = _G })
 	local src = Avon.compile(body, env, opts)
+	-- the chunkname must match what the emitted __SRC shim expects (same
+	-- chunk_id derivation), or runtime error prefixes would not translate
+	local name = "=" .. (opts and opts.src and chunk_id(opts.src) or "nova")
 	local chunk, err
 	if setfenv then -- Lua 5.1 / LuaJIT: no env arg on load, set it explicitly
-		chunk, err = load(src, "=nova")
+		chunk, err = load(src, name)
 		if chunk then setfenv(chunk, env) end
 	else -- Lua 5.2+: pass the environment to load
-		chunk, err = load(src, "=nova", "t", env)
+		chunk, err = load(src, name, "t", env)
 	end
 	if not chunk then error("transpile load failed: " .. tostring(err)) end
 	-- the chunk rides along so the loader can string.dump it into a .novac

@@ -109,9 +109,7 @@ do
       return code
     }
   ]])
-	if got ~= 1 then
-		error("host error caught: expected 1, got " .. tostring(got))
-	end
+	if got ~= 1 then error("host error caught: expected 1, got " .. tostring(got)) end
 	if not (out[1] and out[1]:find("bad argument", 1, true)) then
 		error(
 			"host error message: expected host string, got "
@@ -123,6 +121,46 @@ end
 -- uncaught throw propagates out of the program as an error
 if not E.fails("fn int main() { throw 1 }") then
 	error("uncaught throw: expected failure")
+end
+
+-- a HOST error caught by try reports the Nova source line, not the
+-- generated-chunk line (the __SRC shim + line map). This body declares its
+-- own local, so it takes the hoisted chunk-level function path.
+do
+	local _, out = E.run([[
+  import math
+  fn int main() {
+    try { int x = math.sqrt("oops"); return x } catch e { print("got " + e) }
+    return 0
+  }
+]])
+	if not (out[1] and out[1]:find("^got 3: bad argument")) then
+		error(
+			"host error line map (hoisted): expected 'got 3: bad argument"
+				.. "...', got "
+				.. tostring(out[1])
+		)
+	end
+end
+
+-- same translation through the inline-closure fallback (the body rebinds an
+-- outer local, so it cannot hoist)
+do
+	local _, out = E.run([[
+  import math
+  fn int main() {
+    int code = 0;
+    try { code = math.sqrt("nope") } catch e { print("saw " + e) }
+    return code
+  }
+]])
+	if not (out[1] and out[1]:find("^saw 4: bad argument")) then
+		error(
+			"host error line map (inline): expected 'saw 4: bad argument"
+				.. "...', got "
+				.. tostring(out[1])
+		)
+	end
 end
 
 print("ok")

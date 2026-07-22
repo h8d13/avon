@@ -253,6 +253,7 @@ function Tokenizer:scan_number()
 		type = TokenType.Number,
 		value = tonumber(input:sub(start, i - 1)),
 		isFloat = isFloat,
+		pos = start,
 	}
 end
 
@@ -283,7 +284,11 @@ function Tokenizer:scan_string()
 		i = i + 1
 	end
 	self.i = i + 1
-	return { type = TokenType.String, value = input:sub(start, i - 1) }
+	return {
+		type = TokenType.String,
+		value = input:sub(start, i - 1),
+		pos = start - 1,
+	}
 end
 
 -- char literal: 'c' or an escape like '\n'; value is the byte code
@@ -307,7 +312,7 @@ function Tokenizer:scan_char()
 		error(string.format("%d:%d: unterminated char literal", l, col), 0)
 	end
 	self.i = after + 1
-	return { type = TokenType.Number, value = code }
+	return { type = TokenType.Number, value = code, pos = i }
 end
 
 -- one- or two-char operator/punctuation token (==, +=, <<, &&, ...)
@@ -410,13 +415,22 @@ end
 -- Null denotation (prefix, literals)
 function Parser:nud(tok)
 	if tok.type == TokenType.Number or tok.type == TokenType.String then
-		return { type = "literal", value = tok.value, isFloat = tok.isFloat }
+		return {
+			type = "literal",
+			value = tok.value,
+			isFloat = tok.isFloat,
+			pos = tok.pos,
+		}
 	elseif tok.type == TokenType.Ident then
-		if tok.value == "true" then return { type = "literal", value = 1 } end
-		if tok.value == "false" then return { type = "literal", value = 0 } end
+		if tok.value == "true" then
+			return { type = "literal", value = 1, pos = tok.pos }
+		end
+		if tok.value == "false" then
+			return { type = "literal", value = 0, pos = tok.pos }
+		end
 		-- `null` is a real literal (emits Lua nil), not an unbound name that
 		-- happens to read as nil -- so a mistyped identifier no longer aliases it
-		if tok.value == "null" then return { type = "null" } end
+		if tok.value == "null" then return { type = "null", pos = tok.pos } end
 		-- qualified name: module.func (e.g. math.sqrt, cjson.encode)
 		local name = tok.value
 		while self:peek().value == "." do
@@ -740,7 +754,8 @@ function Parser:parse_decl_list()
 	local var_type = self:parse_type()
 	local decls = {}
 	repeat
-		local var_name = self:expect(TokenType.Ident).value
+		local name_tok = self:expect(TokenType.Ident)
+		local var_name = name_tok.value
 		local init = nil
 		if self:peek().value == "=" then
 			self:next() -- consume '='
@@ -751,6 +766,7 @@ function Parser:parse_decl_list()
 			varType = var_type,
 			name = var_name,
 			value = init,
+			pos = name_tok.pos,
 		}
 	until self:peek().value ~= "," or not self:next()
 	return decls
