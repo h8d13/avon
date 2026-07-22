@@ -1,8 +1,9 @@
 -- Loader/linker features that the in-process `eval.lua` harness cannot reach
 -- (it wires imports via require()/_G and applies no prelude). These exercise
 -- the real Loader against files on disk: importing another Nova file, dotted
--- (nested-folder) paths, the project-wide `.novapre` prelude, and the rule that
--- per-file `__` aliases do NOT leak across an import.
+-- (nested-folder) paths, extensionless files, transitive chains and cycles,
+-- the project-wide `.novapre` prelude, and the rule that per-file `__`
+-- aliases do NOT leak across an import.
 package.path = "lang/?.lua;codegen/?.lua;" .. package.path
 local Loader = require("loader")
 
@@ -72,6 +73,41 @@ eq(
 	7,
 	"dotted import a.b.c as g"
 )
+
+-- an extensionless file of the same name resolves when no .nova exists
+eq(
+	run_tree({
+		["geom"] = "fn int area(int s) { return s * s }\n",
+		["main.nova"] = "import geom\nfn int main() { return geom.area(3) }\n",
+	}, "main.nova"),
+	9,
+	"import resolves an extensionless file"
+)
+
+-- imports chain across several files: main -> geom -> depth, both
+-- extensionless; each module's own imports resolve from the entry root
+eq(
+	run_tree({
+		["depth"] = "fn int leaf() { return 5 }\n",
+		["geom"] = "import depth\nfn int mid(int x) { return depth.leaf() + x }\n",
+		["main.nova"] = "import geom\nfn int main() { return geom.mid(2) }\n",
+	}, "main.nova"),
+	7,
+	"transitive import chain through extensionless files"
+)
+
+-- a cycle in that chain is a load error, not a hang or stack overflow
+do
+	local ok, err = pcall(run_tree, {
+		["a.nova"] = "import b\nfn int fa() { return 1 }\n",
+		["b.nova"] = "import a\nfn int fb() { return 2 }\n",
+		["main.nova"] = "import a\nfn int main() { return a.fa() }\n",
+	}, "main.nova")
+	if ok then error("circular import: expected failure") end
+	if not tostring(err):find("circular import", 1, true) then
+		error("circular import: wrong error: " .. tostring(err))
+	end
+end
 
 -- a `.novapre` at the entry root supplies `__` aliases to every compiled file
 -- (entry and imports alike), so an alias declared once works project-wide
