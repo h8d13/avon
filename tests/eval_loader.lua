@@ -246,4 +246,95 @@ do
 	os.execute("rm -rf " .. root)
 end
 
+-- .novac across a multi-file tree with an EXTENSIONLESS module: both files
+-- cache (geom -> geom.novac), a warm run loads every module from bytecode
+-- without parsing, and editing only the module recompiles just it
+do
+	local Parser = require("parser")
+	local root = os.tmpname()
+	os.remove(root)
+	assert(os.execute("mkdir -p " .. root))
+	local function w(rel, s)
+		local fh = assert(io.open(root .. "/" .. rel, "w"))
+		fh:write(s)
+		fh:close()
+	end
+	w("geom", "fn int area(int s) { return s * s }\n") -- no extension
+	w("main.nova", "import geom\nfn int main() { return geom.area(6) }\n")
+
+	local mods = Loader.run(root .. "/main.nova")
+	eq(mods.main(), 36, "novac multi-file: cold result")
+	for _, cf in ipairs({ root .. "/main.novac", root .. "/geom.novac" }) do
+		local fh = io.open(cf, "rb")
+		if not fh then error("novac multi-file: cache not written: " .. cf) end
+		fh:close()
+	end
+
+	local real_parse = Parser.parse
+	local parses = 0
+	Parser.parse = function(self)
+		parses = parses + 1
+		return real_parse(self)
+	end
+	local ok, warm = pcall(Loader.run, root .. "/main.nova")
+	Parser.parse = real_parse
+	if not ok then error("novac multi-file: warm run failed: " .. tostring(warm)) end
+	eq(warm.main(), 36, "novac multi-file: warm result")
+	eq(parses, 0, "novac multi-file: warm parse count")
+
+	-- module edit: geom recompiles, main.nova stays a cache hit
+	w("geom", "fn int area(int s) { return s * s + 1 }\n")
+	eq(
+		Loader.run(root .. "/main.nova").main(),
+		37,
+		"novac multi-file: module edit recompiles the module"
+	)
+
+	os.execute("rm -rf " .. root)
+end
+
+-- .novac with a .novapre prelude: the prelude is part of the cache key. A
+-- warm run hits (the alias rewrites are baked into the bytecode), and
+-- editing ONLY the prelude invalidates every cached file -- here the alias
+-- `pick` is re-pointed from one() to two(), so a stale cache would keep
+-- returning 1
+do
+	local Parser = require("parser")
+	local root = os.tmpname()
+	os.remove(root)
+	assert(os.execute("mkdir -p " .. root))
+	local function w(rel, s)
+		local fh = assert(io.open(root .. "/" .. rel, "w"))
+		fh:write(s)
+		fh:close()
+	end
+	w(".novapre", "__one = pick\n")
+	w("lib.nova", "fn int one() { return 1 }\nfn int two() { return 2 }\n")
+	w("main.nova", "import lib\nfn int main() { return lib.pick() }\n")
+
+	eq(Loader.run(root .. "/main.nova").main(), 1, "novapre cache: cold")
+
+	local real_parse = Parser.parse
+	local parses = 0
+	Parser.parse = function(self)
+		parses = parses + 1
+		return real_parse(self)
+	end
+	local ok, warm = pcall(Loader.run, root .. "/main.nova")
+	Parser.parse = real_parse
+	if not ok then error("novapre cache: warm run failed: " .. tostring(warm)) end
+	eq(warm.main(), 1, "novapre cache: warm result")
+	eq(parses, 0, "novapre cache: warm parse count")
+
+	-- prelude-only edit: sources untouched, every cache must miss
+	w(".novapre", "__two = pick\n")
+	eq(
+		Loader.run(root .. "/main.nova").main(),
+		2,
+		"novapre cache: prelude edit invalidates all caches"
+	)
+
+	os.execute("rm -rf " .. root)
+end
+
 print("ok")
