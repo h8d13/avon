@@ -114,8 +114,8 @@ fn int oddsum(int n) {
 	return s
 }
 
-// throw raises a value; try/catch binds it. catches a Nova throw and an
-// error from a called function alike
+// throw raises a value; try/catch binds it. when nothing throws, the
+// handler is skipped entirely
 fn int checked(int x) {
 	if x < 0 { throw 99; }
 	return x
@@ -126,26 +126,22 @@ fn int safe(int x) {
 	try {
 		r = checked(x);
 	} catch e {
-		print("check was: " + e);
+		print("check was: " + e); // string + value concatenates
 		r = e;
 	}
 	return r
 }
 
-// prints a message, then throws an int; the catch recovers it
-fn int risky() {
-	print("something went wrong");
-	throw 7
-}
-
+// the same catch traps an error from a called function, host ones
+// included: e binds the host's message string, not a thrown Nova value
 fn int recover() {
 	int code = 0;
 	try {
-		risky();
+		code = math.sqrt("oops"); // host rejects the string argument
+		print("never reached"); // rest of the try body is skipped
 	} catch e {
-		print("error was: " + e); // string + value concatenates
-		code = e;
-		// try something else...
+		print("error was: " + e);
+		code = 1; // fall back to a known-good value
 	}
 	return code
 }
@@ -156,5 +152,5 @@ fn int main() {
 	print(greeting + " World!"); // file-scope str concatenates
 	return sum(5) + abs(id(-3)) + sign(-42) + base
 		+ max(3, 9) + oddbit(5) + grade(2) + q + r + circle(2) + hyp(3, 4)
-		+ oddsum(20) + safe(-5) + axisweight(Y)
+		+ oddsum(20) + safe(-5) + safe(7) + recover() + axisweight(Y)
 }

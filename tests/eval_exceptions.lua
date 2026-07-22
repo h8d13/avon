@@ -1,6 +1,7 @@
 -- Exception edge cases: throw across a call boundary, catch binding the
 -- thrown value, `except` as a catch synonym, normal (non-throwing) path skips
--- the handler, and an uncaught throw propagates out as a failure.
+-- the handler, host errors caught alike, and an uncaught throw propagates
+-- out as a failure.
 local E = require("tests/eval")
 
 local function eq(src, expected, label)
@@ -91,6 +92,33 @@ eq(
 	79,
 	"multi-return inside try body"
 )
+
+-- an error raised by a called host function is caught by the same try;
+-- the handler binds the host's message string, not a thrown Nova value
+do
+	local got, out = E.run([[
+    import math
+    fn int main() {
+      int code = 0;
+      try {
+        code = math.sqrt("oops");
+      } catch e {
+        print("host: " + e);
+        code = 1;
+      }
+      return code
+    }
+  ]])
+	if got ~= 1 then
+		error("host error caught: expected 1, got " .. tostring(got))
+	end
+	if not (out[1] and out[1]:find("bad argument", 1, true)) then
+		error(
+			"host error message: expected host string, got "
+				.. tostring(out[1])
+		)
+	end
+end
 
 -- uncaught throw propagates out of the program as an error
 if not E.fails("fn int main() { throw 1 }") then

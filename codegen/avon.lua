@@ -1094,7 +1094,7 @@ function block(cx, list, cl)
 end
 
 -- emit one Nova function: signature, missing-arg defaults, body, fallthrough
-local function emit_function(cx, n, min_args)
+local function emit_function(cx, n, min_args, fwd)
 	-- fresh scalar-type scope; param types seed is_int (param.type is a bare
 	-- type-name string in the parser). File-scope vars seed both scopes:
 	-- visible everywhere, params/locals shadow them
@@ -1121,7 +1121,10 @@ local function emit_function(cx, n, min_args)
 	cx.ffiarr = scan_ffi_arrays(cx, n.params, n.body)
 	-- declared return arity: how many pcall results a try must capture
 	cx.fnretc = n.returnTypes and #n.returnTypes or 0
-	push(cx, "function " .. n.name .. "(" .. table.concat(ps, ", ") .. ")")
+	-- fwd-declared names assign into their chunk local; the rest are
+	-- `local function` (immutable self-upvalue: direct recursive dispatch)
+	local head = fwd and "function " or "local function "
+	push(cx, head .. n.name .. "(" .. table.concat(ps, ", ") .. ")")
 	cx.ind = cx.ind + 1
 	-- default a missing arg to 0 (the VM zero-filled unbound params), but only
 	-- for params some call under-supplies: saturated params skip it. `or 0`
@@ -1286,14 +1289,56 @@ function Avon.compile(body, env, opts)
 		end
 	end
 
-	-- forward-declare every function name so call order / mutual recursion
-	-- work; file-scope var names join them so function bodies capture them
-	-- as upvalues (a top-level decl list is a body entry with no .type)
+	-- Which functions are referenced before their definition point in the
+	-- emitted chunk: an earlier function's body (call-before-def, mutual
+	-- recursion), or any try body (hoisted try functions splice ahead of
+	-- every definition, so be conservative about anything a try touches)?
+	-- Those keep the forward-decl + assignment form. Everything else emits
+	-- as `local function`, whose self-reference upvalue is immutable --
+	-- LuaJIT then treats the recursive call target as a constant (direct
+	-- dispatch), worth ~20% on call-heavy recursion.
+	local needs_fwd = {}
+	do
+		local seen = {}
+		local function mark_refs(node)
+			for name in pairs(collect_refs(node, {})) do
+				if cx.funcs[name] and not seen[name] then
+					needs_fwd[name] = true
+				end
+			end
+		end
+		-- try bodies may hoist to chunk level AHEAD of every definition,
+		-- so any function they reference needs the fwd form no matter
+		-- where it is defined -- the `seen` order filter does not apply
+		local function scan_trys(node)
+			if type(node) ~= "table" then return end
+			if node.type == "try" then
+				for name in pairs(collect_refs(node.body, {})) do
+					if cx.funcs[name] then needs_fwd[name] = true end
+				end
+			end
+			for _, v in pairs(node) do
+				scan_trys(v)
+			end
+		end
+		for _, n in ipairs(body) do
+			if n.type == "function" then
+				seen[n.name] = true -- self-calls don't force the fwd form
+				mark_refs(n.body)
+				scan_trys(n.body)
+			end
+		end
+	end
+
+	-- forward-declare the functions that need it, so call order / mutual
+	-- recursion work; file-scope var names always join them so function
+	-- bodies capture them as upvalues (a top-level decl list is a body
+	-- entry with no .type)
 	local names, fwd = {}, {}
 	for _, n in ipairs(body) do
 		if n.type == "function" then
 			names[#names + 1] = n.name
-			fwd[#fwd + 1] = n.name
+			if needs_fwd[n.name] then fwd[#fwd + 1] = n.name end
 		elseif not n.type then
 			for _, d in ipairs(n) do
 				fwd[#fwd + 1] = d.name
@@ -1323,7 +1368,9 @@ function Avon.compile(body, env, opts)
 
 	local min_args = scan_min_args(body)
 	for _, n in ipairs(body) do
-		if n.type == "function" then emit_function(cx, n, min_args) end
+		if n.type == "function" then
+			emit_function(cx, n, min_args, needs_fwd[n.name])
+		end
 	end
 	for _, line in ipairs(decl_lines) do
 		cx.buf[#cx.buf + 1] = line
