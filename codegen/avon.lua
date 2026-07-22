@@ -16,12 +16,19 @@
 -- from the host running the compiler (`jit` global). Bitwise ops emit operators
 -- on 5.4 and bit.* calls on LuaJIT.
 --
--- try/catch is a pcall around a closure. A `return` inside the try BODY is
--- captured (the __NORET sentinel) and re-returned from the function, so try
--- bodies can return. The only residue: a `break`/`continue` in a try body that
--- targets a loop OUTSIDE the try cannot cross the closure -- Lua rejects it at
--- load (a loud error, never a silent miscompile); break/continue to a loop that
--- is itself inside the body work fine.
+-- try/catch is a pcall around the body. Where the body proves safe
+-- (try_hoist_params) it compiles to a chunk-level function called with its
+-- free locals -- created once at load, so a try in a hot loop stays on
+-- trace (closure creation is NYI in LuaJIT); otherwise it falls back to an
+-- inline closure per entry. A `return` inside the try BODY is captured (the
+-- __NORET sentinel) and re-returned from the function, so try bodies can
+-- return. The only residue: a `break`/`continue` in a try body that targets
+-- a loop OUTSIDE the try cannot cross the pcalled function -- Lua rejects it
+-- at load (a loud error, never a silent miscompile); break/continue to a
+-- loop that is itself inside the body work fine.
+--
+-- Provably simple `int[N]`/`float[N]` locals compile to ffi double[N] under
+-- LuaJIT (scan_ffi_arrays); everything unproven keeps the __ZERO table.
 --
 -- The emitters below take a compile context `cx` (buffer, indent, type maps,
 -- label counters) instead of capturing it as upvalues, so they live at file
@@ -41,6 +48,9 @@ end
 
 -- emit LuaJIT-compatible code when the compiler runs under LuaJIT
 local JIT = rawget(_G, "jit") ~= nil
+
+-- ffi fixed arrays are only worth emitting where the JIT compiles them
+local FFI_OK = JIT and pcall(require, "ffi")
 
 local cmp = {
 	["<"] = "<",
@@ -117,6 +127,24 @@ local function collect_bound(node, set)
 	end
 end
 
+-- 1-based line:col of byte offset `pos` in `src` (mirrors Tokenizer:linecol)
+local function linecol(src, pos)
+	local line, last = 1, 0
+	for at in src:sub(1, pos):gmatch("()\n") do
+		line = line + 1
+		last = at
+	end
+	return line, pos - last
+end
+
+-- "L:C: " prefix for a node's source offset; "" when the source or the
+-- offset is not wired (a direct Avon.compile without opts.src)
+local function at(cx, pos)
+	if not (cx.src and pos) then return "" end
+	local l, c = linecol(cx.src, pos)
+	return l .. ":" .. c .. ": "
+end
+
 -- a bare Nova name must resolve to something real: a local/param/loop/catch
 -- var, an enum constant, a user function, or a host name reachable through the
 -- compile env (which chains to _G). Anything else is a typo that would otherwise
@@ -124,12 +152,14 @@ end
 -- it at compile time. Only the leading segment of a dotted name is checked:
 -- `a.b.c` rides on `a` resolving to a module/table. Skips entirely when no env
 -- is wired (a direct Avon.compile with no host environment to check against).
-local function check_name(cx, name)
+-- `pos` (the node's source offset) tags the error with line:col; level 0
+-- keeps the message free of Lua's own file:line prefix.
+local function check_name(cx, name, pos)
 	if not cx.env then return end
 	local base = name:match("^[^.]+")
 	if cx.bound[base] or cx.consts[base] ~= nil or cx.funcs[base] then return end
 	if cx.env[base] ~= nil then return end
-	error("unknown name '" .. base .. "'")
+	error(at(cx, pos) .. "unknown name '" .. base .. "'", 0)
 end
 
 function E(cx, node)
@@ -142,7 +172,7 @@ function E(cx, node)
 	elseif t == "null" then
 		return "nil"
 	elseif t == "identifier" then
-		check_name(cx, node.name)
+		check_name(cx, node.name, node.pos)
 		local c = cx.consts[node.name]
 		if c ~= nil then return tostring(c) end
 		return node.name
@@ -175,7 +205,7 @@ function E(cx, node)
 		-- expression position (matches the VM taking result slot 0);
 		-- destructure and bare-call-statement build their own call text and
 		-- keep all values
-		if node.name then check_name(cx, node.name) end
+		if node.name then check_name(cx, node.name, node.pos) end
 		local fn = node.name or ("(" .. E(cx, node.callee) .. ")")
 		return "(" .. fn .. "(" .. args_str(cx, node.args) .. "))"
 	elseif t == "member" then
@@ -346,8 +376,16 @@ function emit_decl(cx, d)
 	if d.varType and d.varType.type == "arraytype" then
 		cx.typeenv[d.name] = is_int_type(cx, d.varType.base) and "arr:int"
 			or "arr:float"
-		cx.used.__ZERO = true
-		push(cx, pre .. d.name .. " = setmetatable({}, __ZERO)")
+		local sz = cx.ffiarr and cx.ffiarr[d.name]
+		if sz then
+			-- proven numeric, bounded, non-escaping (scan_ffi_arrays):
+			-- ffi fixed array, zero-filled by construction
+			cx.arrsizes[sz] = true
+			push(cx, pre .. d.name .. " = __arr" .. sz .. "()")
+		else
+			cx.used.__ZERO = true
+			push(cx, pre .. d.name .. " = setmetatable({}, __ZERO)")
+		end
 	else
 		local tag = scalar_tag(cx, d.varType and d.varType.name)
 		cx.typeenv[d.name] = tag
@@ -365,7 +403,7 @@ end
 function emit_decl_list(cx, decls)
 	if is_destructure(decls) then
 		local call = decls[#decls].value
-		if call.name then check_name(cx, call.name) end
+		if call.name then check_name(cx, call.name, call.pos) end
 		local ns = {}
 		for i, d in ipairs(decls) do
 			ns[i] = d.name
@@ -416,6 +454,317 @@ local function assigns_name(node, names)
 		if type(v) == "table" and assigns_name(v, names) then return true end
 	end
 	return false
+end
+
+-- the ffi analysis' view of a counting loop: literal bounds only, counter
+-- declared once and never reassigned in the body. Returns the counter name
+-- and its inclusive upper bound, or nil.
+local function lite_counter(node)
+	local init = node.init
+	if init.type or #init ~= 1 then return nil end
+	local d, c, u = init[1], node.cond, node.update
+	local v = d.value
+	if
+		not (
+			v
+			and v.type == "literal"
+			and type(v.value) == "number"
+			and v.value >= 0
+		)
+	then
+		return nil
+	end
+	if not (c and c.type == "binary" and (c.op == "<" or c.op == "<=")) then
+		return nil
+	end
+	if c.left.type ~= "identifier" or c.left.name ~= d.name then return nil end
+	if c.right.type ~= "literal" or type(c.right.value) ~= "number" then
+		return nil
+	end
+	if not (u and u.type == "binary" and u.op == "=") then return nil end
+	if u.left.type ~= "identifier" or u.left.name ~= d.name then return nil end
+	local r = u.right
+	local plus_one = r.type == "binary"
+		and r.op == "+"
+		and (
+			(
+				r.left.type == "identifier"
+				and r.left.name == d.name
+				and r.right.type == "literal"
+				and r.right.value == 1
+			)
+			or (
+				r.right.type == "identifier"
+				and r.right.name == d.name
+				and r.left.type == "literal"
+				and r.left.value == 1
+			)
+		)
+	if not plus_one then return nil end
+	if assigns_name(node.body, { [d.name] = true }) then return nil end
+	return d.name, c.op == "<" and c.right.value - 1 or c.right.value
+end
+
+-- ffi fixed-array analysis. An `int[N]`/`float[N]` local can compile to an
+-- ffi `double[N]` instead of a `__ZERO`-metatabled table: zero-filled by
+-- construction, no rehash growth, raw loads/stores on trace. But Nova
+-- arrays are more permissive than a typed array: cells may hold row
+-- pointers (jagged grids), indices may run past N (the table just grows),
+-- and the array may escape to code this pass cannot see. So a local gets
+-- the ffi form only when, within its function, every use proves out:
+--   - no escape: the name never appears outside index-base position (a
+--     call arg, return value, RHS, ternary arm, or rebind disqualifies)
+--   - every store is a provably numeric value (literal, arithmetic over
+--     safe operands, or a scalar only ever assigned such values)
+--   - every index is a literal in [0,N) or the counter of an enclosing
+--     lite_counter loop whose range fits [0,N)
+-- Anything unproven keeps the table emission: semantics never change, only
+-- the representation of the provably-simple case does.
+local function scan_ffi_arrays(cx, params, body)
+	if not cx.opts.ffi then return {} end
+	local cand, declc, scalars = {}, {}, {}
+	local function collect(node)
+		if type(node) ~= "table" then return end
+		if node.type == "decl" then
+			declc[node.name] = (declc[node.name] or 0) + 1
+			local vt = node.varType
+			if vt and vt.type == "arraytype" then
+				if
+					type(vt.size) == "number"
+					and vt.size > 0
+					and not is_str_type(cx, vt.base)
+				then
+					cand[node.name] = vt.size
+				end
+			else
+				local vs = scalars[node.name] or {}
+				scalars[node.name] = vs
+				if node.value then vs[#vs + 1] = node.value end
+			end
+		elseif
+			node.type == "binary"
+			and node.op == "="
+			and node.left.type == "identifier"
+		then
+			local vs = scalars[node.left.name]
+			if vs then vs[#vs + 1] = node.right end
+		end
+		for _, v in pairs(node) do
+			collect(v)
+		end
+	end
+	collect(body)
+	for name in pairs(cand) do
+		if declc[name] > 1 then cand[name] = nil end -- shadowed: ambiguous
+	end
+	for _, p in ipairs(params) do
+		cand[p.name] = nil -- a param may hold an array; don't reason about it
+	end
+	if not next(cand) then return cand end
+
+	-- scalar value safety: greatest fixpoint. Start every declared scalar
+	-- safe, drop any with a value expression not provably numeric, repeat
+	-- until stable so unsafety propagates through scalar-to-scalar copies.
+	-- (Reads of array cells are conservatively unsafe: values only.)
+	local safe = {}
+	for name in pairs(scalars) do
+		safe[name] = true
+	end
+	local function numval(e)
+		local t = e.type
+		if t == "literal" then return type(e.value) == "number" end
+		if t == "identifier" then
+			return safe[e.name] == true or cx.consts[e.name] ~= nil
+		end
+		if t == "unary" then return numval(e.right) end
+		if t == "ternary" then return numval(e.thenE) and numval(e.elseE) end
+		if t == "binary" then
+			return e.op ~= "=" and numval(e.left) and numval(e.right)
+		end
+		return false
+	end
+	repeat
+		local changed = false
+		for name, vs in pairs(scalars) do
+			if safe[name] then
+				for _, e in ipairs(vs) do
+					if not numval(e) then
+						safe[name], changed = false, true
+						break
+					end
+				end
+			end
+		end
+	until not changed
+
+	-- value range of an index expression: literals, bounded counters
+	-- (over-approximated to [0, hi]), and + / * over nonnegative ranges
+	-- (monotone, so endpoints multiply/add). nil = unknown.
+	local function range(e, bounds)
+		if e.type == "literal" then
+			if type(e.value) ~= "number" then return nil end
+			return e.value, e.value
+		end
+		if e.type == "identifier" then
+			local hi = bounds[e.name]
+			if hi ~= nil then return 0, hi end
+			return nil
+		end
+		if e.type == "binary" and (e.op == "+" or e.op == "*") then
+			local llo, lhi = range(e.left, bounds)
+			if llo == nil or llo < 0 then return nil end
+			local rlo, rhi = range(e.right, bounds)
+			if rlo == nil or rlo < 0 then return nil end
+			if e.op == "+" then return llo + rlo, lhi + rhi end
+			return llo * rlo, lhi * rhi
+		end
+		return nil
+	end
+
+	-- index expression provably inside [0, size)?
+	local function bounded(e, size, bounds)
+		local lo, hi = range(e, bounds)
+		return lo ~= nil and lo >= 0 and hi < size
+	end
+
+	-- walk the body carrying the enclosing bounded-counter environment;
+	-- disqualify candidates on the first unproven use
+	local walk
+	local function walk_index(node, bounds)
+		local a = node.array
+		if a.type == "identifier" then
+			local sz = cand[a.name]
+			if sz and not bounded(node.index, sz, bounds) then
+				cand[a.name] = nil
+			end
+		else
+			walk(a, bounds)
+		end
+		walk(node.index, bounds)
+	end
+	function walk(node, bounds)
+		if type(node) ~= "table" or not next(cand) then return end
+		local t = node.type
+		if t == "identifier" then
+			cand[node.name] = nil -- bare reference = escape
+			return
+		elseif t == "index" then
+			walk_index(node, bounds)
+			return
+		elseif t == "binary" and node.op == "=" and node.left.type == "index" then
+			local tgt = node.left
+			local a = tgt.array
+			if a.type == "identifier" then
+				local sz = cand[a.name]
+				if
+					sz
+					and not (
+						bounded(tgt.index, sz, bounds)
+						and numval(node.right)
+					)
+				then
+					cand[a.name] = nil
+				end
+			else
+				walk(a, bounds)
+			end
+			walk(tgt.index, bounds)
+			walk(node.right, bounds)
+			return
+		elseif t == "for" then
+			local var, hi = lite_counter(node)
+			if var and (declc[var] or 0) <= 1 then
+				local nb = setmetatable(
+					{ [var] = hi },
+					{ __index = bounds }
+				)
+				walk(node.init, bounds)
+				walk(node.cond, nb)
+				walk(node.update, nb)
+				walk(node.body, nb)
+				return
+			end
+		end
+		for _, v in pairs(node) do
+			walk(v, bounds)
+		end
+	end
+	walk(body, {})
+	return cand
+end
+
+-- every base name an expression subtree references: identifier nodes plus
+-- named-call heads; a dotted name rides on its leading segment
+local function collect_refs(node, out)
+	if type(node) ~= "table" then return out end
+	if node.type == "identifier" then out[node.name:match("^[^.]+")] = true end
+	if node.type == "call" and node.name then
+		out[node.name:match("^[^.]+")] = true
+	end
+	for _, v in pairs(node) do
+		collect_refs(v, out)
+	end
+	return out
+end
+
+-- direct rebinding (`name = ...`; ++/+= desugar to `=`) of a name in `names`
+local function assigns_direct(node, names)
+	if type(node) ~= "table" then return false end
+	if
+		node.type == "binary"
+		and node.op == "="
+		and node.left.type == "identifier"
+		and names[node.left.name]
+	then
+		return true
+	end
+	for _, v in pairs(node) do
+		if type(v) == "table" and assigns_direct(v, names) then return true end
+	end
+	return false
+end
+
+-- decl multiplicity per name (catch vars count), for shadow detection
+local function count_decls(node, out)
+	if type(node) ~= "table" then return out end
+	if node.type == "decl" then out[node.name] = (out[node.name] or 0) + 1 end
+	if node.type == "try" and node.catchVar then
+		out[node.catchVar] = (out[node.catchVar] or 0) + 1
+	end
+	for _, v in pairs(node) do
+		count_decls(v, out)
+	end
+	return out
+end
+
+-- Can this try body compile as a chunk-level function instead of a fresh
+-- closure per entry? Closure creation (FNEW) is NYI in LuaJIT, so a try
+-- inside a hot loop aborts the whole trace back to the interpreter; a
+-- chunk-level function is created once at load and pcall of it stays on
+-- trace. Free function-locals pass as arguments (sorted, stable output);
+-- file vars and user functions are chunk locals either way, so the body
+-- still reads AND writes those as upvalues. Returns the argument list, or
+-- nil to fall back to the inline closure when the body rebinds a free
+-- local (the argument copy would go stale) or shadows a name also bound
+-- outside the body (a read before the inner decl would resolve differently
+-- at chunk level).
+local function try_hoist_params(cx, node)
+	local refs = collect_refs(node.body, {})
+	local inner, bodyc = {}, count_decls(node.body, {})
+	collect_bound(node.body, inner)
+	local free, fset = {}, {}
+	for name in pairs(refs) do
+		if cx.fnbound[name] and not inner[name] then
+			free[#free + 1] = name
+			fset[name] = true
+		end
+	end
+	for name in pairs(inner) do
+		if (bodyc[name] or 0) < (cx.fndecls[name] or 0) then return nil end
+	end
+	if assigns_direct(node.body, fset) then return nil end
+	table.sort(free)
+	return free
 end
 
 -- recognize the canonical counting loop `for int i = a; i < b; ++i` so it can
@@ -499,7 +848,7 @@ function emit_stmt(cx, node, cl)
 			push(cx, "local _ = " .. E(cx, node)) -- bare expression (rare)
 		end
 	elseif t == "call" then
-		if node.name then check_name(cx, node.name) end
+		if node.name then check_name(cx, node.name, node.pos) end
 		-- same '('-glue hazard as emit_assign for a callee expression
 		local fn = node.name or (";(" .. E(cx, node.callee) .. ")")
 		push(cx, fn .. "(" .. args_str(cx, node.args) .. ")")
@@ -639,37 +988,79 @@ function emit_switch(cx, node, cl)
 	push(cx, "end")
 end
 
--- pcall the body in a closure. A `return` inside the body returns from the
--- closure; we capture those values (table.pack) and re-return them from the
--- real function, so try bodies can return. __NORET marks "fell through" (no
--- return). The `do ... end` lets a body return be the last statement and still
--- allow the trailing `return __NORET` fallthrough.
+-- pcall the body. A `return` inside the body returns from the pcalled
+-- function; we capture those values and re-return them from the real
+-- function, so try bodies can return. __NORET marks "fell through" (no
+-- return). The `do ... end` lets a body return be the last statement and
+-- still allow the trailing `return __NORET` fallthrough.
+--
+-- pcall results capture into plain locals, as many as the ENCLOSING
+-- function's declared return arity (return types are required, so the most
+-- a body `return` can yield is known statically): no table.pack round-trip,
+-- so a try on the hot path allocates nothing. Where the body also proves
+-- hoistable (try_hoist_params), the pcalled function is chunk-level too,
+-- and the whole try compiles allocation-free.
 function emit_try(cx, node, cl)
 	cx.tryc = cx.tryc + 1
-	cx.used.__pack, cx.used.__unpack, cx.used.__NORET = true, true, true
-	local r = "__try" .. cx.tryc
-	push(cx, "local " .. r .. " = __pack(pcall(function()")
+	cx.used.__NORET = true
+	local n = cx.tryc
+	local ok = "__ok" .. n
+	local vs = {}
+	for i = 1, math.max(1, cx.fnretc or 1) do
+		vs[i] = "__tv" .. n .. "_" .. i
+	end
+	local rets = table.concat(vs, ", ")
+	local free = cx.opts.tryhoist and try_hoist_params(cx, node) or nil
+	if free then
+		cx.tbc = cx.tbc + 1
+		local fn = "__tb" .. cx.tbc
+		local ps = table.concat(free, ", ")
+		-- render the body function into cx.trybuf (spliced at chunk level
+		-- by compile); a nested hoisted try appends its own def first, so
+		-- inner defs always precede the outer def that calls them
+		local sbuf, sind = cx.buf, cx.ind
+		cx.buf, cx.ind = {}, 0
+		push(cx, "local function " .. fn .. "(" .. ps .. ")")
+		cx.ind = 1
+		push(cx, "do")
+		cx.ind = 2
+		block(cx, node.body, nil)
+		cx.ind = 1
+		push(cx, "end")
+		push(cx, "return __NORET")
+		cx.ind = 0
+		push(cx, "end")
+		local def = cx.buf
+		cx.buf, cx.ind = sbuf, sind
+		for _, line in ipairs(def) do
+			cx.trybuf[#cx.trybuf + 1] = line
+		end
+		push(
+			cx,
+			"local "
+				.. ok
+				.. ", "
+				.. rets
+				.. " = pcall("
+				.. fn
+				.. (#free > 0 and ", " .. ps or "")
+				.. ")"
+		)
+	else
+		push(cx, "local " .. ok .. ", " .. rets .. " = pcall(function()")
+		cx.ind = cx.ind + 1
+		push(cx, "do")
+		cx.ind = cx.ind + 1
+		block(cx, node.body, nil)
+		cx.ind = cx.ind - 1
+		push(cx, "end")
+		push(cx, "return __NORET")
+		cx.ind = cx.ind - 1
+		push(cx, "end)")
+	end
+	push(cx, "if " .. ok .. " then")
 	cx.ind = cx.ind + 1
-	push(cx, "do")
-	cx.ind = cx.ind + 1
-	block(cx, node.body, nil)
-	cx.ind = cx.ind - 1
-	push(cx, "end")
-	push(cx, "return __NORET")
-	cx.ind = cx.ind - 1
-	push(cx, "end))")
-	push(cx, "if " .. r .. "[1] then")
-	cx.ind = cx.ind + 1
-	push(
-		cx,
-		"if "
-			.. r
-			.. "[2] ~= __NORET then return __unpack("
-			.. r
-			.. ", 2, "
-			.. r
-			.. ".n) end"
-	)
+	push(cx, "if " .. vs[1] .. " ~= __NORET then return " .. rets .. " end")
 	cx.ind = cx.ind - 1
 	push(cx, "else")
 	cx.ind = cx.ind + 1
@@ -678,14 +1069,14 @@ function emit_try(cx, node, cl)
 		"local "
 			.. node.catchVar
 			.. " = ((type("
-			.. r
-			.. "[2]) == 'table' and "
-			.. r
-			.. "[2].nova) and "
-			.. r
-			.. "[2].value or "
-			.. r
-			.. "[2])"
+			.. vs[1]
+			.. ") == 'table' and "
+			.. vs[1]
+			.. ".nova) and "
+			.. vs[1]
+			.. ".value or "
+			.. vs[1]
+			.. ")"
 	)
 	block(cx, node.handler, cl)
 	cx.ind = cx.ind - 1
@@ -713,13 +1104,23 @@ local function emit_function(cx, n, min_args)
 		cx.typeenv[k] = v
 		cx.bound[k] = true
 	end
+	-- fnbound/fndecls: names bound by THIS function only (no file vars),
+	-- for the try-hoist free-local computation and its shadow check
+	cx.fnbound, cx.fndecls = {}, {}
 	local ps = {}
 	for i, p in ipairs(n.params) do
 		ps[i] = p.name
 		cx.typeenv[p.name] = scalar_tag(cx, p.type)
 		cx.bound[p.name] = true
+		cx.fnbound[p.name] = true
+		cx.fndecls[p.name] = (cx.fndecls[p.name] or 0) + 1
 	end
 	collect_bound(n.body, cx.bound)
+	collect_bound(n.body, cx.fnbound)
+	count_decls(n.body, cx.fndecls)
+	cx.ffiarr = scan_ffi_arrays(cx, n.params, n.body)
+	-- declared return arity: how many pcall results a try must capture
+	cx.fnretc = n.returnTypes and #n.returnTypes or 0
 	push(cx, "function " .. n.name .. "(" .. table.concat(ps, ", ") .. ")")
 	cx.ind = cx.ind + 1
 	-- default a missing arg to 0 (the VM zero-filled unbound params), but only
@@ -770,6 +1171,25 @@ end
 local function emit_prelude(cx)
 	local u = cx.used
 	if u.bit then push(cx, "local bit = require('bit')") end
+	-- one ffi constructor per distinct declared array size (sorted: stable)
+	if next(cx.arrsizes) then
+		push(cx, "local ffi = require('ffi')")
+		local sizes = {}
+		for n in pairs(cx.arrsizes) do
+			sizes[#sizes + 1] = n
+		end
+		table.sort(sizes)
+		for _, n in ipairs(sizes) do
+			push(
+				cx,
+				"local __arr"
+					.. n
+					.. " = ffi.typeof('double["
+					.. n
+					.. "]')"
+			)
+		end
+	end
 	if u.__idiv or u.__imod then
 		u.__floor, u.__ceil = true, true
 	end
@@ -822,7 +1242,8 @@ local function emit_prelude(cx)
 	if u.__NORET then push(cx, "local __NORET = {}") end
 end
 
-function Avon.compile(body, env)
+function Avon.compile(body, env, opts)
+	opts = opts or {}
 	local cx = {
 		buf = {},
 		ind = 0,
@@ -835,9 +1256,17 @@ function Avon.compile(body, env)
 		bound = {}, -- names bound in the current function, reset per function
 		env = env, -- host environment (chains to _G); nil = skip name checks
 		used = {}, -- shims the emitters referenced; prelude emits only these
+		opts = { -- emission choices, overridable for A/B benching
+			ffi = opts.ffi == nil and FFI_OK or opts.ffi,
+			tryhoist = opts.tryhoist ~= false,
+		},
+		src = opts.src, -- Nova source text: line:col in compile errors
+		arrsizes = {}, -- ffi array sizes referenced; prelude emits ctors
+		trybuf = {}, -- hoisted try-body functions, spliced at chunk level
 		labelc = 0,
 		subjc = 0,
 		tryc = 0,
+		tbc = 0,
 	}
 	for _, n in ipairs(body) do
 		if n.type == "enum" then
@@ -871,7 +1300,9 @@ function Avon.compile(body, env)
 			end
 		end
 	end
-	if #fwd > 0 then push(cx, "local " .. table.concat(fwd, ", ")) end
+	-- rendered at assembly time: the forward decls must precede the hoisted
+	-- try-body functions (which reference user functions and file vars)
+	local fwd_line = #fwd > 0 and ("local " .. table.concat(fwd, ", ")) or nil
 
 	-- file-scope decls render into a side buffer FIRST (fills typeenv/bound
 	-- so function bodies type them), but splice into the chunk AFTER the
@@ -904,10 +1335,15 @@ function Avon.compile(body, env)
 	end
 	push(cx, "return {" .. table.concat(kv, ", ") .. "}")
 
-	-- prelude renders last (cx.used is complete by now) but lands first
+	-- prelude renders last (cx.used is complete by now) but lands first;
+	-- then forward decls, hoisted try bodies, functions, file-var inits
 	local body_lines = cx.buf
 	cx.buf = {}
 	emit_prelude(cx)
+	if fwd_line then push(cx, fwd_line) end
+	for _, line in ipairs(cx.trybuf) do
+		cx.buf[#cx.buf + 1] = line
+	end
 	for _, line in ipairs(body_lines) do
 		cx.buf[#cx.buf + 1] = line
 	end
@@ -917,9 +1353,10 @@ end
 
 -- Compile Nova `body` and load it. `env` supplies builtins/imports (and falls
 -- back to globals); returns a table mapping function name -> Lua function.
-function Avon.load(body, env)
+-- `opts` (optional) selects emission choices, see Avon.compile.
+function Avon.load(body, env, opts)
 	env = setmetatable(env or {}, { __index = _G })
-	local src = Avon.compile(body, env)
+	local src = Avon.compile(body, env, opts)
 	local chunk, err
 	if setfenv then -- Lua 5.1 / LuaJIT: no env arg on load, set it explicitly
 		chunk, err = load(src, "=nova")
@@ -928,7 +1365,8 @@ function Avon.load(body, env)
 		chunk, err = load(src, "=nova", "t", env)
 	end
 	if not chunk then error("transpile load failed: " .. tostring(err)) end
-	return chunk(), src
+	-- the chunk rides along so the loader can string.dump it into a .novac
+	return chunk(), src, chunk
 end
 
 return Avon

@@ -14,6 +14,7 @@ local tests = {
 	"tests/eval_pragmas.lua",
 	"tests/eval_scope.lua",
 	"tests/eval_filescope.lua",
+	"tests/eval_runner.lua",
 }
 
 local lua = arg[-1] or "lua5.4"

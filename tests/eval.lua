@@ -33,7 +33,7 @@ local function run(src, entry, args)
 		end
 	end
 
-	local mods = Avon.load(ast.body, env)
+	local mods = Avon.load(ast.body, env, { src = src })
 	local fn = mods[entry]
 	if not fn then error("no function '" .. tostring(entry) .. "'") end
 	-- pad missing entry args to the entry's arity with 0 (mirrors the runner;

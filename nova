@@ -91,8 +91,11 @@ if not ok then
 	if type(result) == "table" and result.nova then
 		msg = "uncaught throw: " .. tostring(result.value)
 	else
-		-- strip Lua's "file:line:" prefix so the message reads as a Nova error
-		msg = tostring(result):gsub("^.-:%d+: ", "")
+		msg = tostring(result)
+		-- strip Lua's "file:line:" prefix so the message reads as a Nova
+		-- error, but keep a leading "line:col:" -- that is Nova's own
+		-- position tag from the parser or the transpiler
+		if not msg:match("^%d+:%d+: ") then msg = msg:gsub("^.-:%d+: ", "") end
 	end
 	io.stderr:write("nova: " .. file .. ": " .. msg .. "\n")
 	os.exit(1)

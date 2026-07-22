@@ -20,6 +20,15 @@ end
 -- typo in a variable read: `cnt` was never declared
 fails("fn int main() { int count = 5; return cnt }", "unknown variable read")
 
+-- the unknown-name error carries the source position (line:col of the name)
+do
+	local ok, err = pcall(E.run, "fn int main() {\n  return typo\n}")
+	if ok then error("positional error: expected failure, but it ran") end
+	if not tostring(err):find("^2:10: unknown name 'typo'") then
+		error("positional error: expected 2:10 tag, got " .. tostring(err))
+	end
+end
+
 -- typo in a function call: `helpr` is not a function
 fails(
 	[[

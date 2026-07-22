@@ -42,4 +42,16 @@ eq(
 	"enum order with trailing comma"
 )
 
+-- uninitialized scalars default by type: numerics read 0, strings read ""
+eq("fn int main() { int x; return x }", 0, "uninitialized int reads 0")
+eq("fn float main() { float f; return f }", 0, "uninitialized float reads 0")
+eq(
+	[[
+  fn str tag() { str s; return s + "empty" }
+  fn str main() { return tag() }
+]],
+	"empty",
+	"uninitialized str reads empty string"
+)
+
 print("ok")

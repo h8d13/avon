@@ -268,7 +268,9 @@ function Tokenizer:scan_ident()
 	word = self.aliases[word] or word -- rewrite alias to its canonical keyword
 	self.i = i
 	local kind = keywords[word] and TokenType.Keyword or TokenType.Ident
-	return { type = kind, value = word }
+	-- pos rides along so name-carrying AST nodes can be stamped with their
+	-- source offset (the codegen turns it into line:col in its errors)
+	return { type = kind, value = word, pos = start }
 end
 
 function Tokenizer:scan_string()
@@ -421,8 +423,8 @@ function Parser:nud(tok)
 			self:next()
 			name = name .. "." .. self:expect(TokenType.Ident).value
 		end
-		if self:peek().value == "(" then return self:parse_call(name) end
-		return { type = "identifier", name = name }
+		if self:peek().value == "(" then return self:parse_call(name, tok.pos) end
+		return { type = "identifier", name = name, pos = tok.pos }
 	elseif tok.value == "(" then
 		local expr = self:parse_expression()
 		self:expect(")")
@@ -513,9 +515,9 @@ end
 -- (math.sqrt, a user fn); the name-string form keeps the int-return inference
 -- keyed on the function name. Chained callees (require("m").sqrt) come through
 -- the `(` led instead, carrying a `callee` expression rather than a name.
-function Parser:parse_call(name)
+function Parser:parse_call(name, pos)
 	self:expect("(")
-	return { type = "call", name = name, args = self:parse_args_rest() }
+	return { type = "call", name = name, args = self:parse_args_rest(), pos = pos }
 end
 
 -- Lookahead: is this Ident-led statement a declaration (`T name` /

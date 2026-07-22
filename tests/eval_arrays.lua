@@ -101,4 +101,35 @@ eq(
 	"array passed by pointer, mutated in callee"
 )
 
+-- unwritten cells read as 0. This shape (bounded counters, numeric stores,
+-- no escape) takes the ffi representation under LuaJIT, the table under PUC
+eq(
+	[[
+  fn int main() {
+    int[8] xs;
+    for int i = 0; i < 4; ++i { xs[i] = 5 }
+    int s = 0;
+    for int j = 0; j < 8; ++j { s += xs[j] }
+    return s
+  }
+]],
+	20,
+	"unwritten cells default to 0"
+)
+
+-- the same default through the table (__ZERO) representation: escaping to a
+-- callee disqualifies the ffi form on any runtime
+eq(
+	[[
+  fn int sum(int p) {
+    int s = 0;
+    for int j = 0; j < 8; ++j { s += p[j] }
+    return s
+  }
+  fn int main() { int[8] xs; xs[0] = 5; return sum(xs) }
+]],
+	5,
+	"unwritten cells default to 0 (escaping array, table form)"
+)
+
 print("ok")

@@ -152,4 +152,62 @@ do
 	if mods.main() ~= 7 then error("entry not callable from Loader.run mods") end
 end
 
+-- an import with no matching .nova file falls back to require(): a
+-- luarocks-installed rock and a preloaded module take the same path
+do
+	package.preload["fakerock"] = function()
+		return { triple = function(x) return x * 3 end }
+	end
+	local r = run_tree({
+		["main.nova"] = "import fakerock\n"
+			.. "fn int main() { return fakerock.triple(5) }\n",
+	}, "main.nova")
+	package.preload["fakerock"] = nil
+	package.loaded["fakerock"] = nil
+	eq(r, 15, "import falls back to require() for host rocks")
+end
+
+-- .novac bytecode cache: the first run writes it, a second run loads the
+-- dumped bytecode without parsing, and editing the source invalidates it
+do
+	local Parser = require("parser")
+	local root = os.tmpname()
+	os.remove(root)
+	assert(os.execute("mkdir -p " .. root))
+	local main = root .. "/main.nova"
+	local fh = assert(io.open(main, "w"))
+	fh:write("fn int main() { return 11 }\n")
+	fh:close()
+
+	local mods = Loader.run(main)
+	eq(mods.main(), 11, "novac: cold run result")
+	local cf = io.open(main .. "c", "rb")
+	if not cf then error("novac: cache file not written") end
+	cf:close()
+
+	-- warm: the parser must not run at all
+	local real_parse = Parser.parse
+	local parses = 0
+	Parser.parse = function(self)
+		parses = parses + 1
+		return real_parse(self)
+	end
+	local ok, warm, wast = pcall(Loader.run, main)
+	Parser.parse = real_parse
+	if not ok then error("novac: warm run failed: " .. tostring(warm)) end
+	eq(warm.main(), 11, "novac: warm run result")
+	eq(parses, 0, "novac: warm run parse count")
+	if not (wast and wast.body and wast.body[1].name == "main") then
+		error("novac: warm AST stub missing the entry function")
+	end
+
+	-- invalidation: change the source, expect a recompile with the new result
+	fh = assert(io.open(main, "w"))
+	fh:write("fn int main() { return 22 }\n")
+	fh:close()
+	eq(Loader.run(main).main(), 22, "novac: edit invalidates cache")
+
+	os.execute("rm -rf " .. root)
+end
+
 print("ok")

@@ -101,7 +101,7 @@ directory; every compiled file (entry and imports) inherits them. For
 ## 🔤 Literals
 
 ```cpp
-123         // integer
+123         // int
 3.14        // float
 "hello"     // string
 'c'         // char
@@ -346,8 +346,9 @@ import a.b.c as g   // root/a/b/c.nova    -> g.fn(...)
 
 This project was originally developped by @rxrbln but had very different goals (codegen, RISC-V).
 But this idea was basically re-inventing Lua's contributors' work, which was impractical.
-I thought the idea was elegant and generalized it for **x86_64 target only**, straight `load()` to Lua.
+I thought the idea was elegant and generalized it for straight `load()` to Lua.
 
 > It also was missing a lot of features that were described in the documentation. Which now mostly work.
 
 Used `stylua` to enforce style accross the cb.
+Syntax highlighting is available in [editos/](https://github.com/h8d13/avon/tree/main/editors)

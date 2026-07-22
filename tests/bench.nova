@@ -28,7 +28,38 @@ fn int arraywork(int reps) {
 	return s
 }
 
+// default-0 reads over scattered writes: every 10th slot set, the rest
+// never written. Scattered indices land a table's stores in its hash part,
+// the worst case for the __ZERO emission; the ffi form is one flat store.
+fn int sparse(int reps) {
+	int s = 0;
+	for int k = 0; k < reps; ++k {
+		int[1000] xs;
+		for int i = 0; i < 100; ++i { xs[i * 10] = 1 }
+		for int j = 0; j < 1000; ++j { s += xs[j] }
+	}
+	return s
+}
+
+// try/catch on the hot path: accumulate through a file var (a try body may
+// write file vars but not rebind function locals, so the body stays
+// hoistable to a chunk-level function)
+int acc = 0
+
+fn int guarded(int x) {
+	if x % 97 == 0 { throw "boom" }
+	return x * 2
+}
+
+fn int trysum(int n) {
+	acc = 0;
+	for int i = 1; i <= n; ++i {
+		try { acc += guarded(i) } catch e { acc += 1 }
+	}
+	return acc
+}
+
 // lets `./nova bench.nova` run as a sanity check without args
 fn int main() {
-	return fib(20) + loopsum(1000) + arraywork(1)
+	return fib(20) + loopsum(1000) + arraywork(1) + sparse(1) + trysum(100)
 }
