@@ -307,6 +307,19 @@ function is_int(cx, node)
 	return false
 end
 
+-- Emit `e` for a slot declared with type name `tn`. A value whose static type
+-- is already int needs nothing; one Nova cannot prove int (a host call, a host
+-- field, a float source) goes through __toint, so a declared `int` constrains
+-- the value at the boundary instead of merely documenting it. Non-int slots
+-- are emitted verbatim: only int narrows.
+local function E_typed(cx, tn, e)
+	local src = E(cx, e)
+	if tn == nil or not is_int_type(cx, tn) then return src end
+	if is_int(cx, e) then return src end
+	cx.used.__toint = true
+	return "__toint(" .. src .. ")"
+end
+
 -- is_str(node): does this expression have Nova string type? Drives `+`
 -- concatenation vs numeric add. String-ness propagates through `+` (so chained
 -- builds stay strings) and the two branches of a ternary; everything else
@@ -440,13 +453,20 @@ function emit_decl(cx, d)
 			push(cx, pre .. d.name .. " = setmetatable({}, __ZERO)")
 		end
 	else
-		local tag = scalar_tag(cx, d.varType and d.varType.name)
+		local tn = d.varType and d.varType.name
+		local tag = scalar_tag(cx, tn)
 		cx.typeenv[d.name] = tag
 		-- uninitialized scalars zero-fill; an uninitialized string starts empty
 		local default = tag == "str" and '""' or "0"
+		-- the declared type narrows the initializer: `int n = host.call()`
+		-- stores an int, so the typeenv tag it seeds stays truthful for every
+		-- is_int decision downstream
 		push(
 			cx,
-			pre .. d.name .. " = " .. (d.value and E(cx, d.value) or default)
+			pre
+				.. d.name
+				.. " = "
+				.. (d.value and E_typed(cx, tn, d.value) or default)
 		)
 	end
 end
@@ -875,17 +895,24 @@ function emit_for_init(cx, init, cl)
 end
 
 -- assignment statement: `arr[i] = v` indexes the target, plain `x = v` names it
+-- A '('-led statement glues onto the previous line as a call: `x = lo` then
+-- `(f())[i] = v` parses as `lo(f())`. Wrapping the statement in `do ... end`
+-- puts a keyword in front of the paren, which splits them on every target --
+-- a leading ';' does the same only from 5.2 on, where the empty statement
+-- exists, and LuaJIT would reject it.
+local function unglue(stmt)
+	if stmt:sub(1, 1) ~= "(" then return stmt end
+	return "do " .. stmt .. " end"
+end
+
 function emit_assign(cx, node)
 	local tgt = node.left
-	if tgt.type == "index" then
-		local base = E(cx, tgt.array)
-		-- a '('-led statement glues onto the previous line as a call
-		-- (`x = lo\n(f())[i] = v` parses as `lo(f())`); ';' splits them
-		if base:sub(1, 1) == "(" then base = ";" .. base end
-		push(cx, base .. "[" .. E(cx, tgt.index) .. "] = " .. E(cx, node.right))
-	else
+	if tgt.type ~= "index" then
 		push(cx, tgt.name .. " = " .. E(cx, node.right))
+		return
 	end
+	local lhs = E(cx, tgt.array) .. "[" .. E(cx, tgt.index) .. "]"
+	push(cx, unglue(lhs .. " = " .. E(cx, node.right)))
 end
 
 function emit_stmt(cx, node, cl)
@@ -909,8 +936,8 @@ function emit_stmt(cx, node, cl)
 	elseif t == "call" then
 		if node.name then check_name(cx, node.name, node.pos) end
 		-- same '('-glue hazard as emit_assign for a callee expression
-		local fn = node.name or (";(" .. E(cx, node.callee) .. ")")
-		push(cx, fn .. "(" .. args_str(cx, node.args) .. ")")
+		local fn = node.name or ("(" .. E(cx, node.callee) .. ")")
+		push(cx, unglue(fn .. "(" .. args_str(cx, node.args) .. ")"))
 	elseif t == "index" or t == "identifier" or t == "literal" then
 		push(cx, "local _ = " .. E(cx, node))
 	elseif t == "if" then
@@ -956,8 +983,9 @@ function emit_stmt(cx, node, cl)
 		push(cx, "goto " .. cl)
 	elseif t == "return" then
 		local vs = {}
+		local rts = cx.fnrettypes
 		for i, e in ipairs(node.values or {}) do
-			vs[i] = E(cx, e)
+			vs[i] = E_typed(cx, rts and rts[i], e)
 		end
 		push(cx, #vs == 0 and "return 0" or ("return " .. table.concat(vs, ", ")))
 	elseif t == "throw" then
@@ -1189,8 +1217,10 @@ local function emit_function(cx, n, min_args, fwd)
 	collect_bound(n.body, cx.fnbound)
 	count_decls(n.body, cx.fndecls)
 	cx.ffiarr = scan_ffi_arrays(cx, n.params, n.body)
-	-- declared return arity: how many pcall results a try must capture
+	-- declared return arity: how many pcall results a try must capture.
+	-- the types themselves drive the int coercion on the way out
 	cx.fnretc = n.returnTypes and #n.returnTypes or 0
+	cx.fnrettypes = n.returnTypes
 	-- fwd-declared names assign into their chunk local; the rest are
 	-- `local function` (immutable self-upvalue: direct recursive dispatch)
 	local head = fwd and "function " or "local function "

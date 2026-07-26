@@ -54,4 +54,71 @@ eq(
 	"uninitialized str reads empty string"
 )
 
+-- A declared `int` constrains the value at the boundary, it does not merely
+-- document it. Inside Nova the static type is already known, so these pin the
+-- cases it cannot prove: values arriving from a host module, and float sources
+-- narrowing into an int slot.
+eq(
+	[[
+  import math
+  fn int hyp(int a, int b) { return math.sqrt(a * a + b * b) }
+  fn int main() { return hyp(2, 5) }
+]],
+	5, -- sqrt(29) = 5.385...
+	"host float truncates into an int return"
+)
+
+-- a host predicate hands back a Lua boolean; Nova's own truth values are 1/0,
+-- so an `int` signature must not leak one through
+eq(
+	[[
+  import _G
+  fn int same(int a, int b) { return _G.rawequal(a, b) }
+  fn int main() { return same(3, 3) * 10 + same(3, 4) }
+]],
+	10,
+	"host boolean folds to 1/0 through an int return"
+)
+
+-- truncation is toward zero (C's rule, matching int `/`), not floor
+eq(
+	"fn int trunc() { float f = -3.9; return f } fn int main() { return trunc() }",
+	-3,
+	"int return truncates toward zero"
+)
+
+-- the declared type of a local narrows its initializer too, so the type tag it
+-- seeds stays truthful for later arithmetic
+eq(
+	[[
+  import math
+  fn int main() { int n = math.sqrt(10); return n * 10 }
+]],
+	30, -- 3, not 3.162...
+	"host float truncates into an int local"
+)
+
+-- narrowing is int-only: a float slot keeps its fraction
+eq(
+	[[
+  import math
+  fn float main() { float f = math.sqrt(2); return f > 1.414 && f < 1.415 }
+]],
+	1,
+	"float slot is not narrowed"
+)
+
+-- `int` doubles as this language's catch-all declared type: the README's
+-- store.nova returns an array from `fn int`, so non-numeric values must pass
+-- through the coercion untouched
+eq(
+	[[
+  int[4] cells;
+  fn int slot() return cells
+  fn int main() { slot()[2] = 9; return slot()[2] }
+]],
+	9,
+	"an array still returns through an int signature"
+)
+
 print("ok")

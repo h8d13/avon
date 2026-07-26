@@ -62,3 +62,6 @@ end
 profile("fib", 28)
 profile("loopsum", 300000)
 profile("arraywork", 50)
+-- sparse is the one workload that loses to native Lua on PUC (bench: 2.23x).
+-- Its reads mostly miss, so the __ZERO __index body should dominate the tally
+profile("sparse", 50)
