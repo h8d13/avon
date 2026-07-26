@@ -183,7 +183,7 @@ end
 -- and can't drift from a comment.
 local SLASH, STAR = string.byte("/"), string.byte("*")
 local DQUOTE, SQUOTE = string.byte('"'), string.byte("'")
-local DOT, NL = string.byte("."), string.byte("\n")
+local DOT = string.byte(".")
 
 -- Main scan: skip whitespace/comments in place, then hand a token-producing
 -- character to the matching scanner. Each scanner reads/advances self.i and

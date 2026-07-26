@@ -1,15 +1,33 @@
 #!/bin/sh
-# Nova pre-commit: syntax-check staged .nova files (parse + transpile).
-# Enable once with:  git config core.hooksPath .githooks
+# Nova pre-commit: syntax-check staged .nova files (parse + transpile), then
+# lint the toolchain's own Lua. Enable once with:
+#   git config core.hooksPath .githooks
 set -e
 
-files=$(git diff --cached --name-only --diff-filter=ACM | grep '\.nova$' || true)
-[ -z "$files" ] && exit 0
+staged() { git diff --cached --name-only --diff-filter=ACM | grep "$1" || true; }
 
-# prefer whatever `lua` resolves to: pinning a release here means the hook
-# quietly checks an interpreter the developer has already moved off of
-lua=$(command -v lua || command -v luajit)
-[ -z "$lua" ] && { echo "pre-commit: no lua interpreter found" >&2; exit 1; }
+nova_files=$(staged '\.nova$')
+lua_files=$(staged '\.lua$')
+# the runner has no extension, so it never matches the .lua sweep
+case "$(staged '^nova$')" in *nova*) lua_files="$lua_files nova" ;; esac
 
-# shellcheck disable=SC2086
-"$lua" tools/check.lua $files
+if [ -n "$nova_files" ]; then
+	# prefer whatever `lua` resolves to: pinning a release here means the
+	# hook quietly checks an interpreter the developer has moved off of
+	lua=$(command -v lua || command -v luajit)
+	if [ -z "$lua" ]; then
+		echo "pre-commit: no lua interpreter found" >&2
+		exit 1
+	fi
+	# shellcheck disable=SC2086
+	"$lua" tools/check.lua $nova_files
+fi
+
+if [ -n "$lua_files" ]; then
+	if command -v luacheck >/dev/null; then
+		# shellcheck disable=SC2086
+		luacheck $lua_files
+	else
+		echo "pre-commit: luacheck not installed, skipping lint" >&2
+	fi
+fi

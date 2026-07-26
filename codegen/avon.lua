@@ -17,6 +17,15 @@
 -- version number, so a new PUC release needs no change here: bitwise ops emit
 -- native operators on PUC and bit.* calls on LuaJIT.
 --
+-- That detection happens at COMPILE time, so the emitted chunk is specific to
+-- the host that produced it: bit.* output cannot load on PUC, which has no
+-- `bit` module. The invariant that makes this safe is that nothing outlives
+-- the process -- avon compiles and runs under the same interpreter, so the two
+-- always agree. The one feature that ever broke it was the .novac bytecode
+-- cache, which handled it by keying each entry on the runtime and refusing a
+-- mismatch. Any future ahead-of-time mode that writes emission to disk needs
+-- the same guard; without one, a cross-host artifact fails at load.
+--
 -- try/catch is a pcall around the body. Where the body proves safe
 -- (try_hoist_params) it compiles to a chunk-level function called with its
 -- free locals -- created once at load, so a try in a hot loop stays on
@@ -78,7 +87,8 @@ local cmp = {
 
 -- mutually recursive emitters (E <-> E_binary <-> Econd, emit_stmt <-> block),
 -- forward-declared so the bodies below can reference each other.
-local E, E_binary, Econd, is_int, is_str, args_str
+local E, E_binary, Econd, is_int, is_str, is_truthy, args_str, raw_call
+local E_typed
 local emit_decl, emit_decl_list, emit_for_init, emit_assign, emit_for
 local emit_stmt, emit_switch, emit_try, block
 
@@ -112,6 +122,12 @@ local function newprefill(cx)
 	return "__p" .. cx.prefillc
 end
 
+-- mint a fresh capture temporary
+local function newtmp(cx)
+	cx.tmpc = cx.tmpc + 1
+	return "__t" .. cx.tmpc
+end
+
 -- resolve a type name through any typedef chain to its underlying builtin
 local function resolve_type(cx, name)
 	local seen = 0
@@ -140,13 +156,21 @@ local function scalar_tag(cx, name)
 	return is_int_type(cx, name) and "int" or "float"
 end
 
-function args_str(cx, list)
+-- Argument list for a call. When the callee is a user function, each argument
+-- lands in a slot with a declared type, so an int param narrows its argument
+-- exactly as a decl or an assignment would -- otherwise a host value passed
+-- into `fn f(int n)` leaves `n` int-tagged while holding a boolean, and every
+-- is_int decision in that body reads a tag the value does not honour.
+function args_str(cx, list, fname)
+	local ps = fname and cx.paramtypes[fname]
 	local t = {}
 	for i, a in ipairs(list) do
-		t[i] = E(cx, a)
+		local p = ps and ps[i]
+		t[i] = p and E_typed(cx, p.type, a) or E(cx, a)
 	end
 	return table.concat(t, ", ")
 end
+
 
 -- collect every name a function binds: params (added by the caller) plus every
 -- `decl` -- locals, array decls, for-/forin-init and decl-list members are all
@@ -256,27 +280,41 @@ function E(cx, node)
 		end
 		return "(-(" .. r .. "))"
 	elseif t == "ternary" then
-		return "("
-			.. Econd(cx, node.cond)
-			.. " and ("
-			.. E(cx, node.thenE)
-			.. ") or ("
-			.. E(cx, node.elseE)
-			.. "))"
+		-- `c and (A) or (B)` returns B whenever A is falsy, whatever c was,
+		-- so it is only sound when A cannot be nil or false. That holds for
+		-- any number or string (is_truthy), which is nearly all real code.
+		-- Otherwise -- `null`, a host call, a host field -- wrap the arms in
+		-- tables: `and`/`or` still constructs exactly one, so evaluation stays
+		-- short-circuit, and a table is always truthy. The table form is free
+		-- under LuaJIT (allocation sinking) but ~6x the bare form on PUC,
+		-- which is why it is not emitted unconditionally.
+		local c = Econd(cx, node.cond)
+		local a, b = E(cx, node.thenE), E(cx, node.elseE)
+		if is_truthy(cx, node.thenE) then
+			return "(" .. c .. " and (" .. a .. ") or (" .. b .. "))"
+		end
+		return "((" .. c .. " and {" .. a .. "} or {" .. b .. "})[1])"
 	elseif t == "call" then
 		-- parenthesize so a multi-return call yields only its primary value in
 		-- expression position (matches the VM taking result slot 0);
-		-- destructure and bare-call-statement build their own call text and
-		-- keep all values
-		if node.name then check_name(cx, node.name, node.pos) end
-		local fn = node.name or ("(" .. E(cx, node.callee) .. ")")
-		return "(" .. fn .. "(" .. args_str(cx, node.args) .. "))"
+		-- destructure, bare-call-statement and a trailing `return` call use
+		-- raw_call instead and keep all values
+		return "(" .. raw_call(cx, node) .. ")"
 	elseif t == "member" then
 		return E(cx, node.obj) .. "." .. node.field
 	elseif t == "binary" then
 		return E_binary(cx, node)
 	end
 	error("transpile expr: unhandled " .. tostring(t))
+end
+
+-- call text with no wrapping parens, so a multi-return callee keeps every
+-- value. Expression position needs the parens (E adds them) to clamp to the
+-- primary value; the list positions Lua expands into do not.
+function raw_call(cx, node)
+	if node.name then check_name(cx, node.name, node.pos) end
+	local fn = node.name or ("(" .. E(cx, node.callee) .. ")")
+	return fn .. "(" .. args_str(cx, node.args, node.name) .. ")"
 end
 
 -- is_int(node): does this expression have Nova int type? Drives truncating vs
@@ -326,17 +364,39 @@ function is_int(cx, node)
 	return false
 end
 
--- Emit `e` for a slot declared with type name `tn`. A value whose static type
--- is already int needs nothing; one Nova cannot prove int (a host call, a host
--- field, a float source) goes through __toint, so a declared `int` constrains
--- the value at the boundary instead of merely documenting it. Non-int slots
--- are emitted verbatim: only int narrows.
-local function E_typed(cx, tn, e)
-	local src = E(cx, e)
-	if tn == nil or not is_int_type(cx, tn) then return src end
+-- narrow `src` (the emission of `e`) into an int slot. A value whose static
+-- type is already int needs nothing; one Nova cannot prove int (a host call,
+-- a host field, a float source) goes through __toint, so a declared `int`
+-- constrains the value instead of merely documenting it.
+local function wrap_int(cx, e, src)
 	if is_int(cx, e) then return src end
 	cx.used.__toint = true
 	return "__toint(" .. src .. ")"
+end
+
+-- Emit `e` for a slot declared with type name `tn`. Non-int slots are emitted
+-- verbatim: only int narrows.
+function E_typed(cx, tn, e)
+	local src = E(cx, e)
+	if tn == nil or not is_int_type(cx, tn) then return src end
+	return wrap_int(cx, e, src)
+end
+
+-- Emit `e` for a slot already carrying a typeenv tag (a bound name or an
+-- array cell), rather than a written-out type name.
+local function E_tagged(cx, tag, e)
+	local src = E(cx, e)
+	if tag ~= "int" then return src end
+	return wrap_int(cx, e, src)
+end
+
+-- Can `e` never evaluate to nil or false? Every Nova literal is a number or a
+-- string (`true`/`false` parse to 1/0), and is_int proves a number; both are
+-- truthy in Lua, 0 and "" included. `null`, host calls and host fields are
+-- exactly what this fails on, which is what the ternary needs to know.
+function is_truthy(cx, e)
+	if e.type == "literal" then return true end
+	return is_int(cx, e)
 end
 
 -- is_str(node): does this expression have Nova string type? Drives `+`
@@ -391,7 +451,13 @@ function Econd(cx, node)
 	elseif node.type == "unary" and node.op == "!" then
 		return "((" .. E(cx, node.right) .. ") == 0)"
 	end
-	return "((" .. E(cx, node) .. ") ~= 0)"
+	-- a bare `(v) ~= 0` calls nil truthy, since nil is not equal to 0 -- so
+	-- `if null` would take the then-branch, against both C (NULL is false)
+	-- and Nova's own rule that 0 is false. Folding nil/false to 0 first
+	-- settles it; provably-numeric values skip the extra `or`.
+	local v = E(cx, node)
+	if is_truthy(cx, node) then return "((" .. v .. ") ~= 0)" end
+	return "(((" .. v .. ") or 0) ~= 0)"
 end
 
 function E_binary(cx, node)
@@ -527,7 +593,6 @@ end
 function emit_decl_list(cx, decls)
 	if is_destructure(decls) then
 		local call = decls[#decls].value
-		if call.name then check_name(cx, call.name, call.pos) end
 		local ns = {}
 		for i, d in ipairs(decls) do
 			ns[i] = d.name
@@ -539,10 +604,7 @@ function emit_decl_list(cx, decls)
 			(cx.filedecl and "" or "local ")
 				.. table.concat(ns, ", ")
 				.. " = "
-				.. (call.name or ("(" .. E(cx, call.callee) .. ")"))
-				.. "("
-				.. args_str(cx, call.args)
-				.. ")"
+				.. raw_call(cx, call)
 		)
 	else
 		for _, d in ipairs(decls) do
@@ -1116,14 +1178,81 @@ local function unglue(stmt)
 	return "do " .. stmt .. " end"
 end
 
+-- a declared `int` narrows on every store, not only at its declaration:
+-- otherwise `int x = 0; x = host.call()` leaves a boolean in an int-tagged
+-- slot, and every is_int decision downstream (truncating division, the
+-- ternary fast path) is then reasoning from a tag the value does not honour
 function emit_assign(cx, node)
 	local tgt = node.left
 	if tgt.type ~= "index" then
-		push(cx, tgt.name .. " = " .. E(cx, node.right))
+		local tag = cx.typeenv[tgt.name]
+		local rhs = E_tagged(cx, tag, node.right)
+		push(cx, tgt.name .. " = " .. rhs)
 		return
 	end
 	local lhs = E(cx, tgt.array) .. "[" .. E(cx, tgt.index) .. "]"
-	push(cx, unglue(lhs .. " = " .. E(cx, node.right)))
+	-- an int array's cells are int slots too
+	local atag = tgt.array.type == "identifier"
+		and cx.typeenv[tgt.array.name]
+	local etag = atag == "arr:int" and "int" or nil
+	push(cx, unglue(lhs .. " = " .. E_tagged(cx, etag, node.right)))
+end
+
+-- `return`, with the declared return types narrowing each value.
+--
+-- Lua expands only the LAST expression of a list, so when the declared arity
+-- leaves slots after it, a trailing call fills them. E parenthesizes a call to
+-- clamp it to its primary value, which is right in expression position and
+-- wrong here: `fn int, int fwd() { return two() }` would return 3, nil.
+--
+-- A Nova callee forwards directly, since it already narrowed its own returns
+-- on the way out and the tail call is worth keeping. A host callee has not
+-- been through anything, so its values are captured first and narrowed one
+-- slot at a time -- the same contract a single-value return gets.
+local function emit_return(cx, node)
+	local vals = node.values or {}
+	local n, retc = #vals, cx.fnretc or 0
+	local rts = cx.fnrettypes
+	if n == 0 then
+		push(cx, "return 0")
+		return
+	end
+	local vs = {}
+	for i = 1, n - 1 do
+		vs[i] = E_typed(cx, rts and rts[i], vals[i])
+	end
+	local last = vals[n]
+	if last.type ~= "call" or retc <= n then
+		vs[n] = E_typed(cx, rts and rts[n], last)
+		push(cx, "return " .. table.concat(vs, ", "))
+		return
+	end
+	if last.name and cx.funcs[last.name] then
+		vs[n] = raw_call(cx, last)
+		push(cx, "return " .. table.concat(vs, ", "))
+		return
+	end
+	local tmps = {}
+	for _ = n, retc do
+		tmps[#tmps + 1] = newtmp(cx)
+	end
+	push(
+		cx,
+		"local "
+			.. table.concat(tmps, ", ")
+			.. " = "
+			.. raw_call(cx, last)
+	)
+	for i, name in ipairs(tmps) do
+		local tn = rts and rts[n + i - 1]
+		if tn and is_int_type(cx, tn) then
+			cx.used.__toint = true
+			vs[n + i - 1] = "__toint(" .. name .. ")"
+		else
+			vs[n + i - 1] = name
+		end
+	end
+	push(cx, "return " .. table.concat(vs, ", "))
 end
 
 function emit_stmt(cx, node, cl)
@@ -1145,10 +1274,8 @@ function emit_stmt(cx, node, cl)
 			push(cx, "local _ = " .. E(cx, node)) -- bare expression (rare)
 		end
 	elseif t == "call" then
-		if node.name then check_name(cx, node.name, node.pos) end
 		-- same '('-glue hazard as emit_assign for a callee expression
-		local fn = node.name or ("(" .. E(cx, node.callee) .. ")")
-		push(cx, unglue(fn .. "(" .. args_str(cx, node.args) .. ")"))
+		push(cx, unglue(raw_call(cx, node)))
 	elseif t == "index" or t == "identifier" or t == "literal" then
 		push(cx, "local _ = " .. E(cx, node))
 	elseif t == "if" then
@@ -1193,16 +1320,7 @@ function emit_stmt(cx, node, cl)
 		if not cl then error("transpile: continue outside loop") end
 		push(cx, "goto " .. cl)
 	elseif t == "return" then
-		local vs = {}
-		local rts = cx.fnrettypes
-		for i, e in ipairs(node.values or {}) do
-			vs[i] = E_typed(cx, rts and rts[i], e)
-		end
-		push(
-			cx,
-			#vs == 0 and "return 0"
-				or ("return " .. table.concat(vs, ", "))
-		)
+		emit_return(cx, node)
 	elseif t == "throw" then
 		push(
 			cx,
@@ -1353,10 +1471,10 @@ function emit_try(cx, node, cl)
 		push(cx, "end")
 		local def, defmap = cx.buf, cx.map
 		cx.buf, cx.map, cx.ind = sbuf, smap, sind
-		local n = #cx.trybuf
+		local base = #cx.trybuf
 		for i, line in ipairs(def) do
-			cx.trybuf[n + i] = line
-			cx.trymap[n + i] = defmap[i]
+			cx.trybuf[base + i] = line
+			cx.trymap[base + i] = defmap[i]
 		end
 		push(
 			cx,
@@ -1644,6 +1762,8 @@ function Avon.compile(body, env, opts)
 		ret_str = {}, -- user function name -> first return type is str?
 		typeenv = {}, -- per-function scalar types, reset before each function
 		funcs = {}, -- every user function name (for the unbound-name check)
+		rettypes = {}, -- user function name -> declared return type names
+		paramtypes = {}, -- user function name -> declared params
 		bound = {}, -- names bound in the current function, reset per function
 		env = env, -- host environment (chains to _G); nil = skip name checks
 		used = {}, -- shims the emitters referenced; prelude emits only these
@@ -1661,6 +1781,7 @@ function Avon.compile(body, env, opts)
 		trybuf = {}, -- hoisted try-body functions, spliced at chunk level
 		labelc = 0,
 		prefillc = 0,
+		tmpc = 0,
 		subjc = 0,
 		tryc = 0,
 		tbc = 0,
@@ -1680,6 +1801,8 @@ function Avon.compile(body, env, opts)
 			cx.ret_int[n.name] = is_int_type(cx, rt)
 			cx.ret_str[n.name] = is_str_type(cx, rt)
 			cx.funcs[n.name] = true
+			cx.rettypes[n.name] = n.returnTypes
+			cx.paramtypes[n.name] = n.params
 		end
 	end
 

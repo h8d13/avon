@@ -54,10 +54,12 @@ eq(out, "", "runner prints nothing of its own")
 -- --entry picks another function; int args pass through argv
 out, code = run(prog .. " --entry add 30 12")
 eq(code, 42, "--entry with int args")
+eq(out, "", "--entry prints nothing either")
 
 -- missing trailing args pad to 0
 out, code = run(prog .. " --entry add 7")
 eq(code, 7, "missing arg pads to 0")
+eq(out, "", "padding path prints nothing")
 
 -- a return the OS cannot represent keeps only its low 8 bits, and a float
 -- entry truncates on the way out -- both are exit()'s rules, not ours
@@ -67,6 +69,7 @@ fh:write("fn float main() { return 300.9 }\n")
 fh:close()
 out, code = run(wide)
 eq(code, 44, "float truncates and wraps to the low 8 bits") -- 300 % 256
+eq(out, "", "a float entry prints nothing either")
 
 -- an entry that returns nothing is success
 local void = root .. "/void.nova"

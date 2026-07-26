@@ -127,6 +127,105 @@ eq(main("3 > 7 ? 1 : 2"), 2, "ternary false")
 eq(main("7 > 3 ? 1 : 2"), 1, "ternary true")
 eq(main("1 ? 2 ? 10 : 20 : 30"), 10, "nested ternary")
 
+-- A ternary compiles to `c and (A) or (B)` when A is provably a number or
+-- string. That shape silently returns B for a falsy A, so these pin the arms
+-- Nova cannot prove: `null` is Lua nil, and a host predicate hands back a Lua
+-- boolean. Taking the then-branch must win regardless of what is in it.
+eq(
+	"fn int main() { return 1 ? null : 5 }",
+	0, -- null reaches the int return and narrows to 0, NOT the else 5
+	"ternary with null in the then-branch takes the then-branch"
+)
+eq(
+	"fn int main() { return 0 ? null : 5 }",
+	5,
+	"ternary with null still takes the else-branch when false"
+)
+eq(
+	[[
+  import _G
+  fn int main() { return 1 ? _G.rawequal(1, 2) : 9 }
+]],
+	0, -- false narrows to 0; the else 9 would mean the arm was skipped
+	"ternary with a host boolean in the then-branch"
+)
+-- a non-int slot does not narrow, so a falsy host value reaches it intact:
+-- the then-arm was taken iff the string "else" did NOT land in s
+eq(
+	[[
+  import _G
+  fn int main() {
+    str s = 1 ? _G.rawequal(1, 2) : "else";
+    if s { return 1 }
+    return 0
+  }
+]],
+	0,
+	"a falsy host value in a ternary arm is not replaced by the else"
+)
+
+-- exactly one arm is evaluated: the untaken side must not run. `10 / x` would
+-- raise on x = 0 if the ternary lost its short-circuit
+eq(
+	[[
+  fn int safediv(int x) { return x != 0 ? 10 / x : -1 }
+  fn int main() { return safediv(0) * 100 + safediv(5) }
+]],
+	-98, -- -1 * 100 + 2
+	"ternary evaluates only the taken arm"
+)
+
+-- `null` is false in a condition, as in C, and as Nova's own 0-is-false rule
+-- implies. A bare `(v) ~= 0` would call nil truthy
+eq(
+	"fn int main() { if null { return 1 } return 0 }",
+	0,
+	"null is false in a condition"
+)
+eq(
+	[[
+  import _G
+  fn int main() { if _G.rawequal(1, 2) { return 1 } return 0 }
+]],
+	0,
+	"a host false is false in a condition"
+)
+eq(
+	[[
+  import _G
+  fn int main() { if _G.rawequal(1, 1) { return 1 } return 0 }
+]],
+	1,
+	"a host true is true in a condition"
+)
+
+-- a declared int narrows on assignment, not only at its declaration, so the
+-- typeenv tag every later is_int decision reads stays honest
+eq(
+	[[
+  import _G
+  fn int main() { int x = 0; x = _G.rawequal(1, 2); return x }
+]],
+	0,
+	"assignment into an int slot narrows"
+)
+eq(
+	[[
+  import _G
+  fn int main() { int[4] xs; xs[1] = _G.rawequal(1, 2); return xs[1] }
+]],
+	0,
+	"assignment into an int array cell narrows"
+)
+eq(
+	[[
+  import math
+  fn int main() { int x = 0; x = math.sqrt(10); return x * 10 }
+]],
+	30,
+	"assignment truncates a host float"
+)
+
 -- compound assignment desugars and returns updated value via the var
 eq(
 	"fn int main() { int x = 10; x += 5; x *= 2; x -= 3; return x }",
