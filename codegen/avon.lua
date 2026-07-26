@@ -1263,7 +1263,7 @@ local function emit_prelude(cx)
 			)
 		end
 	end
-	if u.__idiv or u.__imod then
+	if u.__idiv or u.__imod or u.__toint then
 		u.__floor, u.__ceil = true, true
 	end
 	local ns, vs = {}, {}
@@ -1297,6 +1297,28 @@ local function emit_prelude(cx)
 		push(cx, "  local q = a / b")
 		push(cx, "  local t = q >= 0 and __floor(q) or __ceil(q)")
 		push(cx, "  return a - t * b")
+		push(cx, "end")
+	end
+	-- coerce a value of unknown provenance into an int slot. Only reachable
+	-- where the static type is NOT already int, which in practice means a
+	-- host call, a host field, or a float source -- pure Nova expressions
+	-- prove int-ness at compile time and pay nothing here.
+	--
+	-- Numbers truncate toward zero (C's rule, matching __idiv/__imod) and a
+	-- boolean folds to 1/0 (Nova's own truth representation), so a host
+	-- predicate cannot leak a Lua boolean past an `int` signature. Anything
+	-- else passes through untouched: `int` doubles as this language's
+	-- catch-all declared type, and arrays are returned from `fn int`
+	-- signatures on purpose (see the store.nova example in README), so
+	-- narrowing tables or strings here would break working programs.
+	if u.__toint then
+		push(cx, "local function __toint(v)")
+		push(cx, "  local t = type(v)")
+		push(cx, "  if t == 'number' then")
+		push(cx, "    if v >= 0 then return __floor(v) else return __ceil(v) end")
+		push(cx, "  elseif t == 'boolean' then return v and 1 or 0")
+		push(cx, "  elseif v == nil then return 0 end")
+		push(cx, "  return v")
 		push(cx, "end")
 	end
 	-- table.pack/unpack are 5.2+; LuaJIT (5.1) needs the fallbacks
