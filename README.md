@@ -103,10 +103,10 @@ directory; every compiled file (entry and imports) inherits them. For
 ```cpp
 123         // int
 3.14        // float
-"hello"     // string
+"hello"     // str
 'c'         // char
-true, false // boolean
-null        // null value
+true, false // bool
+null
 ```
 
 ---
