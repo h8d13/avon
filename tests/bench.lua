@@ -24,7 +24,8 @@ local ast = Parser:new(src):parse()
 
 -- one AST, two emissions: compile does not mutate the AST (verified by the
 -- result cross-check below agreeing across variants)
-local base = Avon.load(ast.body, {}, { ffi = false, tryhoist = false })
+local base =
+	Avon.load(ast.body, {}, { ffi = false, tryhoist = false, prefill = false })
 local new = Avon.load(ast.body, {})
 
 -- native Lua equivalents (must match bench.nova exactly)
@@ -88,7 +89,9 @@ end
 
 -- expect "faster": the new emission targets this workload and must win.
 -- expect "par": untouched emission, must not regress. The ffi array path
--- only exists under LuaJIT, so those two are "par" on PUC Lua.
+-- only exists under LuaJIT, so arraywork is "par" on PUC Lua -- sparse still
+-- wins there on the prefill, which is a table-emission optimization and so
+-- applies to both runtimes.
 local work = {
 	{ name = "fib(32)", entry = "fib", arg = 32, native = nat_fib, expect = "par" },
 	{
@@ -110,7 +113,7 @@ local work = {
 		entry = "sparse",
 		arg = 2000,
 		native = nat_sparse,
-		expect = JIT and "faster" or "par",
+		expect = "faster",
 	},
 	{
 		name = "trysum(2e5)",

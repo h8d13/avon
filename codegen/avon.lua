@@ -106,6 +106,12 @@ local function newcont(cx)
 	return "__cont" .. cx.labelc
 end
 
+-- mint a fresh prefill-loop counter
+local function newprefill(cx)
+	cx.prefillc = cx.prefillc + 1
+	return "__p" .. cx.prefillc
+end
+
 -- resolve a type name through any typedef chain to its underlying builtin
 local function resolve_type(cx, name)
 	local seen = 0
@@ -451,6 +457,25 @@ function emit_decl(cx, d)
 		else
 			cx.used.__ZERO = true
 			push(cx, pre .. d.name .. " = setmetatable({}, __ZERO)")
+			-- reads cover [0,N): materialise it so they hit the array part
+			-- instead of faulting through __ZERO one call at a time. The
+			-- metatable stays for anything indexed past N.
+			local dn = cx.densearr and cx.densearr[d.name]
+			if dn then
+				local v = newprefill(cx)
+				push(
+					cx,
+					"for "
+						.. v
+						.. " = 0, "
+						.. (dn - 1)
+						.. " do "
+						.. d.name
+						.. "["
+						.. v
+						.. "] = 0 end"
+				)
+			end
 		end
 	else
 		local tn = d.varType and d.varType.name
@@ -764,6 +789,136 @@ local function scan_ffi_arrays(cx, params, body)
 	end
 	walk(body, {})
 	return cand
+end
+
+-- Prefill analysis, for the table emission only (the ffi form is already
+-- zero-filled by its constructor). An unwritten cell reads 0 through the
+-- __ZERO metamethod, which on PUC Lua is a Lua call per miss: the sparse
+-- bench writes 100 of 1000 cells and reads all 1000, so 900 misses a rep
+-- cost it 2.2x hand-written Lua. Materialising [0,N) at construction turns
+-- those misses into ordinary array-part hits.
+--
+-- Worth it only when the reads really do cover the range. Prefilling an
+-- array that is barely touched buys N stores for nothing, and the bill grows
+-- with N (a declared 65536 with three live cells measured ~2000x the lazy
+-- form), so a candidate has to prove coverage before opting in: some read
+-- must index it with the counter of an enclosing loop running exactly
+-- [0, N-1]. Stores do not count, since a store already materialises the cell
+-- it touches.
+--
+-- The prefill is invisible to Nova code either way (a cell reads 0 with or
+-- without it), but the table's length and key set are not the same, so an
+-- array reaching a host module could tell. Escaping candidates drop out for
+-- the same reason the ffi analysis drops them.
+local function scan_dense_arrays(cx, params, body)
+	if not cx.opts.prefill then return {} end
+	local cand, declc = {}, {}
+	local function collect(node)
+		if type(node) ~= "table" then return end
+		if node.type == "decl" then
+			declc[node.name] = (declc[node.name] or 0) + 1
+			local vt = node.varType
+			if
+				vt
+				and vt.type == "arraytype"
+				and type(vt.size) == "number"
+				and vt.size > 0
+				and not is_str_type(cx, vt.base)
+			then
+				cand[node.name] = vt.size
+			end
+		end
+		for _, v in pairs(node) do
+			collect(v)
+		end
+	end
+	collect(body)
+	for name in pairs(cand) do
+		if declc[name] > 1 then cand[name] = nil end -- shadowed: ambiguous
+	end
+	for _, p in ipairs(params) do
+		cand[p.name] = nil -- a param may hold an array; don't reason about it
+	end
+	if not next(cand) then return {} end
+
+	-- dense: some read covers [0,N). filled: some store already does,
+	-- making a prefill pure duplicate work (arraywork writes every cell
+	-- before summing it, and prefilling there cost 1.34x native)
+	local dense, filled, walk = {}, {}, nil
+	-- does `idx` step over the whole of [0,sz) under `bounds`?
+	local function covers(idx, sz, bounds)
+		return idx.type == "identifier" and bounds[idx.name] == sz - 1
+	end
+	local function walk_index(node, bounds)
+		local a = node.array
+		if a.type == "identifier" then
+			local sz = cand[a.name]
+			-- read at [0,N-1] via a counter: full coverage
+			if sz and covers(node.index, sz, bounds) then
+				dense[a.name] = true
+			end
+		else
+			walk(a, bounds)
+		end
+		walk(node.index, bounds)
+	end
+	function walk(node, bounds)
+		if type(node) ~= "table" then return end
+		local t = node.type
+		if t == "identifier" then
+			cand[node.name] = nil -- bare reference = escape
+			return
+		elseif t == "index" then
+			walk_index(node, bounds)
+			return
+		elseif t == "binary" and node.op == "=" and node.left.type == "index" then
+			-- store: the cell materialises itself, so this is not
+			-- evidence for prefilling. A store over the whole range
+			-- is evidence AGAINST it. Still walked for escapes.
+			local tgt = node.left
+			if tgt.array.type == "identifier" then
+				local sz = cand[tgt.array.name]
+				if sz and covers(tgt.index, sz, bounds) then
+					filled[tgt.array.name] = true
+				end
+			else
+				walk(tgt.array, bounds)
+			end
+			walk(tgt.index, bounds)
+			walk(node.right, bounds)
+			return
+		elseif t == "for" then
+			local var, hi = lite_counter(node)
+			local init = node.init[1]
+			local lo = init and init.value
+			if
+				var
+				and (declc[var] or 0) <= 1
+				and lo
+				and lo.value == 0
+			then
+				local mt = { __index = bounds }
+				local nb = setmetatable({ [var] = hi }, mt)
+				walk(node.init, bounds)
+				walk(node.cond, nb)
+				walk(node.update, nb)
+				walk(node.body, nb)
+				return
+			end
+		end
+		for _, v in pairs(node) do
+			walk(v, bounds)
+		end
+	end
+	walk(body, {})
+
+	local out = {}
+	for name in pairs(dense) do
+		if cand[name] and not filled[name] then
+			out[name] = cand[name]
+		end
+	end
+	return out
 end
 
 -- every base name an expression subtree references: identifier nodes plus
@@ -1217,6 +1372,7 @@ local function emit_function(cx, n, min_args, fwd)
 	collect_bound(n.body, cx.fnbound)
 	count_decls(n.body, cx.fndecls)
 	cx.ffiarr = scan_ffi_arrays(cx, n.params, n.body)
+	cx.densearr = scan_dense_arrays(cx, n.params, n.body)
 	-- declared return arity: how many pcall results a try must capture.
 	-- the types themselves drive the int coercion on the way out
 	cx.fnretc = n.returnTypes and #n.returnTypes or 0
@@ -1402,6 +1558,7 @@ function Avon.compile(body, env, opts)
 		opts = { -- emission choices, overridable for A/B benching
 			ffi = opts.ffi == nil and FFI_OK or opts.ffi,
 			tryhoist = opts.tryhoist ~= false,
+			prefill = opts.prefill ~= false,
 		},
 		src = opts.src, -- Nova source text: line:col in compile errors
 		chunkname = opts.src and chunk_id(opts.src) or "nova",
@@ -1411,6 +1568,7 @@ function Avon.compile(body, env, opts)
 		arrsizes = {}, -- ffi array sizes referenced; prelude emits ctors
 		trybuf = {}, -- hoisted try-body functions, spliced at chunk level
 		labelc = 0,
+		prefillc = 0,
 		subjc = 0,
 		tryc = 0,
 		tbc = 0,

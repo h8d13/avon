@@ -30,7 +30,9 @@ fn int arraywork(int reps) {
 
 // default-0 reads over scattered writes: every 10th slot set, the rest
 // never written. Scattered indices land a table's stores in its hash part,
-// the worst case for the __ZERO emission; the ffi form is one flat store.
+// so every unwritten cell read used to fault through __ZERO. The reads cover
+// [0,N), so the table form prefills the range (scan_dense_arrays) and the
+// ffi form is zero-filled by its constructor.
 fn int sparse(int reps) {
 	int s = 0;
 	for int k = 0; k < reps; ++k {

@@ -132,4 +132,89 @@ eq(
 	"unwritten cells default to 0 (escaping array, table form)"
 )
 
+-- An array whose reads cover [0,N) is prefilled at construction instead of
+-- faulting each unwritten cell through __ZERO (scan_dense_arrays). The
+-- prefill is an emission choice, so these pin that it changes no result:
+-- every case below must read the same with it on and off.
+local function eq_both(src, expected, label)
+	for _, prefill in ipairs({ true, false }) do
+		local got = E.run(src, nil, nil, { prefill = prefill })
+		if got ~= expected then
+			error(
+				string.format(
+					"%s (prefill=%s): expected %q, got %q",
+					label,
+					tostring(prefill),
+					expected,
+					got
+				)
+			)
+		end
+	end
+end
+
+-- the sparse shape the prefill targets: scattered writes, full-range reads
+eq_both(
+	[[
+  fn int main() {
+    int[100] xs;
+    int s = 0;
+    for int i = 0; i < 10; ++i { xs[i * 10] = 1 }
+    for int j = 0; j < 100; ++j { s += xs[j] }
+    return s
+  }
+]],
+	10,
+	"scattered writes, full-range reads"
+)
+
+-- the metatable survives the prefill: an index past N still reads 0, and
+-- writing there still works (the table just grows, as the README says)
+eq_both(
+	[[
+  fn int main() {
+    int[8] xs;
+    int s = 0;
+    for int j = 0; j < 8; ++j { s += xs[j] }
+    s += xs[99];
+    xs[99] = 7;
+    return s + xs[99]
+  }
+]],
+	7,
+	"reads past N still default to 0 after a prefill"
+)
+
+-- a cell written before the covering read keeps its value, so the prefill
+-- cannot clobber earlier stores
+eq_both(
+	[[
+  fn int main() {
+    int[16] xs;
+    xs[3] = 42;
+    int s = 0;
+    for int j = 0; j < 16; ++j { s += xs[j] }
+    return s
+  }
+]],
+	42,
+	"prefill does not clobber a prior store"
+)
+
+-- float cells: the prefill writes 0, not 0.0, but Nova has one number type
+-- underneath so the sum stays exact
+eq_both(
+	[[
+  fn float main() {
+    float[8] xs;
+    xs[2] = 0.5;
+    float s = 0;
+    for int j = 0; j < 8; ++j { s += xs[j] }
+    return s
+  }
+]],
+	0.5,
+	"float array prefills without disturbing the value"
+)
+
 print("ok")

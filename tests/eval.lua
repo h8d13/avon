@@ -4,10 +4,12 @@
 local Parser = require("lang/parser")
 local Avon = require("codegen/avon")
 
--- run(src[, entry[, args]]) -> result, lines
+-- run(src[, entry[, args[, opts]]]) -> result, lines
 --   result : the entry's primary return value, or 0 if none
 --   lines  : array of captured print() lines (args joined by tab, like print)
-local function run(src, entry, args)
+--   opts   : emission choices passed through to Avon.load (ffi, tryhoist,
+--            prefill), so a test can pin that a choice changes no result
+local function run(src, entry, args, opts)
 	entry = entry or "main"
 	local ast = Parser:new(src):parse()
 
@@ -33,7 +35,11 @@ local function run(src, entry, args)
 		end
 	end
 
-	local mods = Avon.load(ast.body, env, { src = src })
+	local lopts = { src = src }
+	for k, v in pairs(opts or {}) do
+		lopts[k] = v
+	end
+	local mods = Avon.load(ast.body, env, lopts)
 	local fn = mods[entry]
 	if not fn then error("no function '" .. tostring(entry) .. "'") end
 	-- pad missing entry args to the entry's arity with 0 (mirrors the runner;
