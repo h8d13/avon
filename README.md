@@ -16,9 +16,10 @@ Run it under LuaJIT for ~5–14× on hot code: `luajit ./nova prog.nova`.
 # Avon - 艾汶
 
 `avon` is C++ semantics built on Lua, designed for clarity and modern expression.
-Mostly tested only on **Unix** systems.
 
-> It is token based and not indent. It supports `{};` notations without enforcing them.
+
+> Mostly tested only on **Unix** systems. It is token based and not indent.
+> It supports `{};` notations without enforcing them.
 
 ---
 
