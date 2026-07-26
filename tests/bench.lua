@@ -196,48 +196,6 @@ for _, w in ipairs(work) do
 	end
 end
 
--- startup A/B: full pipeline (parse + transpile + load + .novac write) vs
--- a .novac hit (validate + load bytecode). Same fairness: min-of-R, cold
--- removes the cache before every rep so each one pays the whole pipeline.
-package.path = "lang/?.lua;codegen/?.lua;" .. package.path
-local Loader = require("loader")
-local cachefile = "tests/bench.novac"
-
-local tcold = math.huge
-for _ = 1, R do
-	os.remove(cachefile)
-	collectgarbage("collect")
-	local t0 = os.clock()
-	Loader.run("tests/bench.nova")
-	local dt = os.clock() - t0
-	if dt < tcold then tcold = dt end
-end
-local twarm = math.huge -- cache exists from the last cold rep
-for _ = 1, R do
-	collectgarbage("collect")
-	local t0 = os.clock()
-	Loader.run("tests/bench.nova")
-	local dt = os.clock() - t0
-	if dt < twarm then twarm = dt end
-end
-os.remove(cachefile)
-
-print(
-	string.format(
-		"\nstartup: cold %s ms   .novac %s ms   %8.2fx",
-		fmt(tcold),
-		fmt(twarm),
-		twarm > 0 and tcold / twarm or 0
-	)
-)
-if twarm > tcold * 0.5 then
-	failures[#failures + 1] = string.format(
-		"startup: expected .novac to halve cold start, got %.3fms vs %.3fms",
-		twarm * 1000,
-		tcold * 1000
-	)
-end
-
 if #failures > 0 then
 	error("\nA/B expectations failed:\n  " .. table.concat(failures, "\n  "))
 end

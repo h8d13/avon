@@ -2,7 +2,8 @@
 
 > Everything in this readme is mostly functional.
 
-Welcome to `avon`, a transpiler; takes code as input passes it through a `parser` and emits `lua` compiled byte-code directly.
+Welcome to `avon`, a transpiler; takes code as input passes it through a `parser`
+and emits `lua` compiled byte-code directly.
 
 See https://www.lua.org/manual/5.5/
 
@@ -13,8 +14,7 @@ Run it under LuaJIT for ~5–14× on hot code: `luajit ./nova prog.nova`.
 
 # Avon - 艾汶
 
-`avon` is a modern simplified C++ built on Lua, designed for clarity and modern expression.
-It uses `fn` for function declarations, first class multiple return times and omits parentheses for conditional statements, and optional curly braces for single expression functions, too.
+`avon` is C++ semantics built on Lua, designed for clarity and modern expression.
 Mostly tested only on **Unix** systems.
 
 > It is token based and not indent. It supports `{};` notations without enforcing them.
@@ -342,13 +342,15 @@ import a.b.c as g   // root/a/b/c.nova    -> g.fn(...)
 
 ## Additional details
 
-> A minimal language earns its minimalism by not rebuilding what the host already does well.
+> A minimal lang earns its minimalism by not rebuilding what a host already does.
 
-This project was originally developped by @rxrbln but had very different goals (codegen, RISC-V).
-But this idea was basically re-inventing Lua's contributors' work, which was impractical.
-I thought the idea was elegant and generalized it for straight `load()` to Lua.
+This project was originally developped by @rxrbln but had very different goals.
+(codegen, RISC-V). I thought the idea was elegant and generalized it.
+For straight `load()` to Lua.
 
-> It also was missing a lot of features that were described in the documentation. Which now mostly work.
+> It also was missing a lot of features that were described in the documentation.
+> Which now mostly work.
 
 Used `stylua` to enforce style accross the cb.
-Syntax highlighting is available in [editos/](https://github.com/h8d13/avon/tree/main/editors)
+
+Syntax highlighting is available in [editors/](https://github.com/h8d13/avon/tree/main/editors)

@@ -56,8 +56,8 @@ local FFI_OK = JIT and pcall(require, "ffi")
 -- ("<id>:<generated line>:"), and the emitted __SRC shim matches its OWN
 -- chunk's prefix only -- so an error crossing module boundaries is never
 -- mistranslated through the wrong module's line map. Derived from the
--- source text (not a counter) so a .novac-cached chunk keeps the same name
--- across processes.
+-- source text (not a counter) so the same module always gets the same name,
+-- independent of load order.
 local function chunk_id(src)
 	local sum = 0
 	for i = 1, #src, 17 do
@@ -1514,8 +1514,7 @@ function Avon.load(body, env, opts)
 		chunk, err = load(src, name, "t", env)
 	end
 	if not chunk then error("transpile load failed: " .. tostring(err)) end
-	-- the chunk rides along so the loader can string.dump it into a .novac
-	return chunk(), src, chunk
+	return chunk(), src
 end
 
 return Avon
