@@ -134,7 +134,10 @@ for idx = 1, R do
 		run_text[idx] = (" "):rep(L)
 	end
 end
-assert(placed == T, "program did not fully fit (a token found no run wide enough)")
+assert(
+	placed == T,
+	"program did not fully fit (a token found no run wide enough)"
+)
 
 -- render
 local lines = {}

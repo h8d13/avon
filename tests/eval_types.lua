@@ -7,7 +7,14 @@ local E = require("tests/eval")
 local function eq(src, expected, label)
 	local got = E.run(src)
 	if got ~= expected then
-		error(string.format("%s: expected %q, got %q", label, expected, got))
+		error(
+			string.format(
+				"%s: expected %q, got %q",
+				label,
+				expected,
+				got
+			)
+		)
 	end
 end
 
@@ -30,9 +37,21 @@ eq(
 )
 
 -- enum variants number from 0 in declaration order (Red=0, Green=1, Blue=2)
-eq("enum C { Red, Green, Blue } fn int main() { return Red }", 0, "enum first is 0")
-eq("enum C { Red, Green, Blue } fn int main() { return Green }", 1, "enum second is 1")
-eq("enum C { Red, Green, Blue } fn int main() { return Blue }", 2, "enum third is 2")
+eq(
+	"enum C { Red, Green, Blue } fn int main() { return Red }",
+	0,
+	"enum first is 0"
+)
+eq(
+	"enum C { Red, Green, Blue } fn int main() { return Green }",
+	1,
+	"enum second is 1"
+)
+eq(
+	"enum C { Red, Green, Blue } fn int main() { return Blue }",
+	2,
+	"enum third is 2"
+)
 
 -- read together so the ordering is pinned as one value, and a trailing comma
 -- after the last variant (the README spelling) is accepted

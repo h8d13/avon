@@ -22,7 +22,10 @@ local tests = {
 -- under 5.5 never silently tests 5.4. arg[-1] is the running binary; the
 -- fallback names it from the live version rather than pinning a release.
 local lua = arg[-1]
-	or (rawget(_G, "jit") and "luajit" or "lua" .. _VERSION:match("%d+%.%d+"))
+	or (
+		rawget(_G, "jit") and "luajit"
+		or "lua" .. _VERSION:match("%d+%.%d+")
+	)
 local passed, failed = 0, {}
 for _, t in ipairs(tests) do
 	-- capture output so a passing test stays quiet; show it only on failure

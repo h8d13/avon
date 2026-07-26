@@ -5,7 +5,14 @@ local E = require("tests/eval")
 local function eq(src, expected, label, entry, args)
 	local got = E.run(src, entry, args)
 	if got ~= expected then
-		error(string.format("%s: expected %q, got %q", label, expected, got))
+		error(
+			string.format(
+				"%s: expected %q, got %q",
+				label,
+				expected,
+				got
+			)
+		)
 	end
 end
 

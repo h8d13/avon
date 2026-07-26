@@ -48,7 +48,14 @@ end
 
 local function eq(got, expected, label)
 	if got ~= expected then
-		error(string.format("%s: expected %q, got %q", label, expected, got))
+		error(
+			string.format(
+				"%s: expected %q, got %q",
+				label,
+				expected,
+				got
+			)
+		)
 	end
 end
 
@@ -181,11 +188,15 @@ do
 	os.execute("rm -rf " .. root)
 
 	if not ok then error("Loader.run failed: " .. tostring(mods)) end
-	if parses ~= 1 then error("entry parsed " .. parses .. " times, expected 1") end
+	if parses ~= 1 then
+		error("entry parsed " .. parses .. " times, expected 1")
+	end
 	if not (ast and ast.body) then
 		error("Loader.run did not return the entry AST")
 	end
-	if mods.main() ~= 7 then error("entry not callable from Loader.run mods") end
+	if mods.main() ~= 7 then
+		error("entry not callable from Loader.run mods")
+	end
 end
 
 -- an import with no matching .nova file falls back to require(): a

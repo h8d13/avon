@@ -18,7 +18,10 @@ for line in (lua_src .. "\n"):gmatch("(.-)\n") do
 	srclines[#srclines + 1] = line
 end
 
-local env = setmetatable({ pow = function(a, b) return a ^ b end }, { __index = _G })
+local env = setmetatable(
+	{ pow = function(a, b) return a ^ b end },
+	{ __index = _G }
+)
 for _, name in ipairs({ "sqrt", "floor", "ceil", "sin", "cos", "log" }) do
 	env[name] = math[name]
 end
@@ -41,7 +44,14 @@ local function profile(entry, arg)
 	end
 	table.sort(order, function(a, b) return hits[a] > hits[b] end)
 
-	print(string.format("\n== %s(%d) -- %d line-events ==", entry, arg, total))
+	print(
+		string.format(
+			"\n== %s(%d) -- %d line-events ==",
+			entry,
+			arg,
+			total
+		)
+	)
 	print(string.format("%6s %5s   %s", "hits", "%", "emitted line"))
 	for i = 1, math.min(10, #order) do
 		local ln = order[i]

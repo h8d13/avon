@@ -216,7 +216,9 @@ end
 local function check_name(cx, name, pos)
 	if not cx.env then return end
 	local base = name:match("^[^.]+")
-	if cx.bound[base] or cx.consts[base] ~= nil or cx.funcs[base] then return end
+	if cx.bound[base] or cx.consts[base] ~= nil or cx.funcs[base] then
+		return
+	end
 	if cx.env[base] ~= nil then return end
 	error(at(cx, pos) .. "unknown name '" .. base .. "'", 0)
 end
@@ -242,7 +244,9 @@ function E(cx, node)
 		return E(cx, node.array) .. "[" .. E(cx, node.index) .. "]"
 	elseif t == "unary" then
 		local r = E(cx, node.right)
-		if node.op == "!" then return "((" .. r .. ") == 0 and 1 or 0)" end
+		if node.op == "!" then
+			return "((" .. r .. ") == 0 and 1 or 0)"
+		end
 		if node.op == "~" then
 			if JIT then
 				cx.used.bit = true
@@ -302,10 +306,19 @@ function is_int(cx, node)
 	elseif t == "binary" then
 		local op = node.op
 		if op == "&&" or op == "||" or cmp[op] then return true end
-		if op == "&" or op == "|" or op == "^" or op == "<<" or op == ">>" then
+		if
+			op == "&"
+			or op == "|"
+			or op == "^"
+			or op == "<<"
+			or op == ">>"
+		then
 			return true
 		end
-		if op == "+" and (is_str(cx, node.left) or is_str(cx, node.right)) then
+		if
+			op == "+"
+			and (is_str(cx, node.left) or is_str(cx, node.right))
+		then
 			return false -- string concatenation
 		end
 		return is_int(cx, node.left) and is_int(cx, node.right)
@@ -384,7 +397,9 @@ end
 function E_binary(cx, node)
 	local op = node.op
 	if op == "=" then
-		error("transpile: assignment in expression position unsupported")
+		error(
+			"transpile: assignment in expression position unsupported"
+		)
 	end
 	-- boolean-valued ops: build the Lua boolean, then materialize to 1/0
 	if op == "&&" or op == "||" or cmp[op] then
@@ -393,7 +408,11 @@ function E_binary(cx, node)
 	local L, R = E(cx, node.left), E(cx, node.right)
 	if op == "+" then
 		if is_str(cx, node.left) or is_str(cx, node.right) then
-			return "(tostring(" .. L .. ") .. tostring(" .. R .. "))"
+			return "(tostring("
+				.. L
+				.. ") .. tostring("
+				.. R
+				.. "))"
 		end
 		return "((" .. L .. ") + (" .. R .. "))"
 	end
@@ -437,7 +456,9 @@ function E_binary(cx, node)
 			["<<"] = "<<",
 			[">>"] = ">>",
 		}
-		if lb[op] then return "((" .. L .. ") " .. lb[op] .. " (" .. R .. "))" end
+		if lb[op] then
+			return "((" .. L .. ") " .. lb[op] .. " (" .. R .. "))"
+		end
 	end
 	error("transpile binary: unhandled " .. tostring(op))
 end
@@ -446,7 +467,8 @@ function emit_decl(cx, d)
 	-- file-scope decls are forward-declared locals: assign, don't re-declare
 	local pre = cx.filedecl and "" or "local "
 	if d.varType and d.varType.type == "arraytype" then
-		cx.typeenv[d.name] = is_int_type(cx, d.varType.base) and "arr:int"
+		cx.typeenv[d.name] = is_int_type(cx, d.varType.base)
+				and "arr:int"
 			or "arr:float"
 		local sz = cx.ffiarr and cx.ffiarr[d.name]
 		if sz then
@@ -491,7 +513,11 @@ function emit_decl(cx, d)
 			pre
 				.. d.name
 				.. " = "
-				.. (d.value and E_typed(cx, tn, d.value) or default)
+				.. (
+					d.value
+						and E_typed(cx, tn, d.value)
+					or default
+				)
 		)
 	end
 end
@@ -505,7 +531,8 @@ function emit_decl_list(cx, decls)
 		local ns = {}
 		for i, d in ipairs(decls) do
 			ns[i] = d.name
-			cx.typeenv[d.name] = scalar_tag(cx, d.varType and d.varType.name)
+			cx.typeenv[d.name] =
+				scalar_tag(cx, d.varType and d.varType.name)
 		end
 		push(
 			cx,
@@ -549,7 +576,9 @@ local function assigns_name(node, names)
 		if nm and names[nm] then return true end
 	end
 	for _, v in pairs(node) do
-		if type(v) == "table" and assigns_name(v, names) then return true end
+		if type(v) == "table" and assigns_name(v, names) then
+			return true
+		end
 	end
 	return false
 end
@@ -575,12 +604,16 @@ local function lite_counter(node)
 	if not (c and c.type == "binary" and (c.op == "<" or c.op == "<=")) then
 		return nil
 	end
-	if c.left.type ~= "identifier" or c.left.name ~= d.name then return nil end
+	if c.left.type ~= "identifier" or c.left.name ~= d.name then
+		return nil
+	end
 	if c.right.type ~= "literal" or type(c.right.value) ~= "number" then
 		return nil
 	end
 	if not (u and u.type == "binary" and u.op == "=") then return nil end
-	if u.left.type ~= "identifier" or u.left.name ~= d.name then return nil end
+	if u.left.type ~= "identifier" or u.left.name ~= d.name then
+		return nil
+	end
 	local r = u.right
 	local plus_one = r.type == "binary"
 		and r.op == "+"
@@ -675,9 +708,13 @@ local function scan_ffi_arrays(cx, params, body)
 			return safe[e.name] == true or cx.consts[e.name] ~= nil
 		end
 		if t == "unary" then return numval(e.right) end
-		if t == "ternary" then return numval(e.thenE) and numval(e.elseE) end
+		if t == "ternary" then
+			return numval(e.thenE) and numval(e.elseE)
+		end
 		if t == "binary" then
-			return e.op ~= "=" and numval(e.left) and numval(e.right)
+			return e.op ~= "="
+				and numval(e.left)
+				and numval(e.right)
 		end
 		return false
 	end
@@ -687,7 +724,8 @@ local function scan_ffi_arrays(cx, params, body)
 			if safe[name] then
 				for _, e in ipairs(vs) do
 					if not numval(e) then
-						safe[name], changed = false, true
+						safe[name], changed =
+							false, true
 						break
 					end
 				end
@@ -749,7 +787,11 @@ local function scan_ffi_arrays(cx, params, body)
 		elseif t == "index" then
 			walk_index(node, bounds)
 			return
-		elseif t == "binary" and node.op == "=" and node.left.type == "index" then
+		elseif
+			t == "binary"
+			and node.op == "="
+			and node.left.type == "index"
+		then
 			local tgt = node.left
 			local a = tgt.array
 			if a.type == "identifier" then
@@ -871,7 +913,11 @@ local function scan_dense_arrays(cx, params, body)
 		elseif t == "index" then
 			walk_index(node, bounds)
 			return
-		elseif t == "binary" and node.op == "=" and node.left.type == "index" then
+		elseif
+			t == "binary"
+			and node.op == "="
+			and node.left.type == "index"
+		then
 			-- store: the cell materialises itself, so this is not
 			-- evidence for prefilling. A store over the whole range
 			-- is evidence AGAINST it. Still walked for escapes.
@@ -925,7 +971,9 @@ end
 -- named-call heads; a dotted name rides on its leading segment
 local function collect_refs(node, out)
 	if type(node) ~= "table" then return out end
-	if node.type == "identifier" then out[node.name:match("^[^.]+")] = true end
+	if node.type == "identifier" then
+		out[node.name:match("^[^.]+")] = true
+	end
 	if node.type == "call" and node.name then
 		out[node.name:match("^[^.]+")] = true
 	end
@@ -947,7 +995,9 @@ local function assigns_direct(node, names)
 		return true
 	end
 	for _, v in pairs(node) do
-		if type(v) == "table" and assigns_direct(v, names) then return true end
+		if type(v) == "table" and assigns_direct(v, names) then
+			return true
+		end
 	end
 	return false
 end
@@ -955,7 +1005,9 @@ end
 -- decl multiplicity per name (catch vars count), for shadow detection
 local function count_decls(node, out)
 	if type(node) ~= "table" then return out end
-	if node.type == "decl" then out[node.name] = (out[node.name] or 0) + 1 end
+	if node.type == "decl" then
+		out[node.name] = (out[node.name] or 0) + 1
+	end
 	if node.type == "try" and node.catchVar then
 		out[node.catchVar] = (out[node.catchVar] or 0) + 1
 	end
@@ -988,7 +1040,9 @@ local function try_hoist_params(cx, node)
 		end
 	end
 	for name in pairs(inner) do
-		if (bodyc[name] or 0) < (cx.fndecls[name] or 0) then return nil end
+		if (bodyc[name] or 0) < (cx.fndecls[name] or 0) then
+			return nil
+		end
 	end
 	if assigns_direct(node.body, fset) then return nil end
 	table.sort(free)
@@ -1009,7 +1063,9 @@ local function counting_loop(cx, node)
 	local var = d.name
 
 	local c = node.cond -- var < limit  /  var <= limit
-	if c.type ~= "binary" or (c.op ~= "<" and c.op ~= "<=") then return nil end
+	if c.type ~= "binary" or (c.op ~= "<" and c.op ~= "<=") then
+		return nil
+	end
 	if c.left.type ~= "identifier" or c.left.name ~= var then return nil end
 	local limit = c.right
 	if not is_int(cx, limit) then return nil end
@@ -1142,12 +1198,26 @@ function emit_stmt(cx, node, cl)
 		for i, e in ipairs(node.values or {}) do
 			vs[i] = E_typed(cx, rts and rts[i], e)
 		end
-		push(cx, #vs == 0 and "return 0" or ("return " .. table.concat(vs, ", ")))
+		push(
+			cx,
+			#vs == 0 and "return 0"
+				or ("return " .. table.concat(vs, ", "))
+		)
 	elseif t == "throw" then
-		push(cx, "error({nova=true, value=" .. E(cx, node.value) .. "}, 0)")
+		push(
+			cx,
+			"error({nova=true, value="
+				.. E(cx, node.value)
+				.. "}, 0)"
+		)
 	elseif t == "try" then
 		emit_try(cx, node, cl)
-	elseif t == "typedef" or t == "enum" or t == "import" or t == "function" then
+	elseif
+		t == "typedef"
+		or t == "enum"
+		or t == "import"
+		or t == "function"
+	then
 		-- declaration-level: no statement-position effect
 	else
 		error("transpile stmt: unhandled " .. tostring(t))
@@ -1162,7 +1232,16 @@ function emit_for(cx, node, cl)
 		local hi = E(cx, limit)
 		if op == "<" then hi = "(" .. hi .. ") - 1" end
 		cx.typeenv[var] = "int" -- counter type, for is_int in the body
-		push(cx, "for " .. var .. " = " .. E(cx, start) .. ", " .. hi .. " do")
+		push(
+			cx,
+			"for "
+				.. var
+				.. " = "
+				.. E(cx, start)
+				.. ", "
+				.. hi
+				.. " do"
+		)
 		cx.ind = cx.ind + 1
 		local mycl = newcont(cx)
 		push(cx, "do") -- body scope: keeps a continue's goto legal
@@ -1291,7 +1370,10 @@ function emit_try(cx, node, cl)
 				.. ")"
 		)
 	else
-		push(cx, "local " .. ok .. ", " .. rets .. " = pcall(function()")
+		push(
+			cx,
+			"local " .. ok .. ", " .. rets .. " = pcall(function()"
+		)
 		cx.ind = cx.ind + 1
 		push(cx, "do")
 		cx.ind = cx.ind + 1
@@ -1387,7 +1469,9 @@ local function emit_function(cx, n, min_args, fwd)
 	-- only rewrites nil; numbers (incl. 0), strings, arrays pass thru.
 	local ma = min_args[n.name]
 	for idx, p in ipairs(ps) do
-		if ma ~= nil and ma < idx then push(cx, p .. " = " .. p .. " or 0") end
+		if ma ~= nil and ma < idx then
+			push(cx, p .. " = " .. p .. " or 0")
+		end
 	end
 	push(cx, "do") -- wrap body so a fall-through can `return 0`
 	cx.ind = cx.ind + 1
@@ -1475,7 +1559,10 @@ local function emit_prelude(cx)
 	if u.__idiv then
 		push(cx, "local function __idiv(a, b)")
 		push(cx, "  local q = a / b")
-		push(cx, "  if q >= 0 then return __floor(q) else return __ceil(q) end")
+		push(
+			cx,
+			"  if q >= 0 then return __floor(q) else return __ceil(q) end"
+		)
 		push(cx, "end")
 	end
 	if u.__imod then
@@ -1501,7 +1588,10 @@ local function emit_prelude(cx)
 		push(cx, "local function __toint(v)")
 		push(cx, "  local t = type(v)")
 		push(cx, "  if t == 'number' then")
-		push(cx, "    if v >= 0 then return __floor(v) else return __ceil(v) end")
+		push(
+			cx,
+			"    if v >= 0 then return __floor(v) else return __ceil(v) end"
+		)
 		push(cx, "  elseif t == 'boolean' then return v and 1 or 0")
 		push(cx, "  elseif v == nil then return 0 end")
 		push(cx, "  return v")
@@ -1515,7 +1605,9 @@ local function emit_prelude(cx)
 				.. "function(...) return {n = select('#', ...), ...} end"
 		)
 	end
-	if u.__unpack then push(cx, "local __unpack = table.unpack or unpack") end
+	if u.__unpack then
+		push(cx, "local __unpack = table.unpack or unpack")
+	end
 	if u.__ZERO then
 		push(cx, "local __ZERO = {__index = function() return 0 end}")
 	end
@@ -1616,7 +1708,9 @@ function Avon.compile(body, env, opts)
 			if type(node) ~= "table" then return end
 			if node.type == "try" then
 				for name in pairs(collect_refs(node.body, {})) do
-					if cx.funcs[name] then needs_fwd[name] = true end
+					if cx.funcs[name] then
+						needs_fwd[name] = true
+					end
 				end
 			end
 			for _, v in pairs(node) do
@@ -1649,7 +1743,8 @@ function Avon.compile(body, env, opts)
 	end
 	-- rendered at assembly time: the forward decls must precede the hoisted
 	-- try-body functions (which reference user functions and file vars)
-	local fwd_line = #fwd > 0 and ("local " .. table.concat(fwd, ", ")) or nil
+	local fwd_line = #fwd > 0 and ("local " .. table.concat(fwd, ", "))
+		or nil
 
 	-- file-scope decls render into a side buffer FIRST (fills typeenv/bound
 	-- so function bodies type them), but splice into the chunk AFTER the

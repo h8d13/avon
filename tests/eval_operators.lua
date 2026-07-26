@@ -5,7 +5,14 @@ local E = require("tests/eval")
 local function eq(src, expected, label)
 	local got = E.run(src)
 	if got ~= expected then
-		error(string.format("%s: expected %q, got %q", label, expected, got))
+		error(
+			string.format(
+				"%s: expected %q, got %q",
+				label,
+				expected,
+				got
+			)
+		)
 	end
 end
 
@@ -96,7 +103,10 @@ do
     fn int main() { int a = 1 || noise(); int b = 0 && noise(); return a + b }
   ]])
 	if #out ~= 0 then
-		error("short-circuit: RHS ran, saw output: " .. table.concat(out, ","))
+		error(
+			"short-circuit: RHS ran, saw output: "
+				.. table.concat(out, ",")
+		)
 	end
 end
 

@@ -24,8 +24,11 @@ local ast = Parser:new(src):parse()
 
 -- one AST, two emissions: compile does not mutate the AST (verified by the
 -- result cross-check below agreeing across variants)
-local base =
-	Avon.load(ast.body, {}, { ffi = false, tryhoist = false, prefill = false })
+local base = Avon.load(
+	ast.body,
+	{},
+	{ ffi = false, tryhoist = false, prefill = false }
+)
 local new = Avon.load(ast.body, {})
 
 -- native Lua equivalents (must match bench.nova exactly)
@@ -93,7 +96,13 @@ end
 -- wins there on the prefill, which is a table-emission optimization and so
 -- applies to both runtimes.
 local work = {
-	{ name = "fib(32)", entry = "fib", arg = 32, native = nat_fib, expect = "par" },
+	{
+		name = "fib(32)",
+		entry = "fib",
+		arg = 32,
+		native = nat_fib,
+		expect = "par",
+	},
 	{
 		name = "loopsum(2e6)",
 		entry = "loopsum",
@@ -200,6 +209,9 @@ for _, w in ipairs(work) do
 end
 
 if #failures > 0 then
-	error("\nA/B expectations failed:\n  " .. table.concat(failures, "\n  "))
+	error(
+		"\nA/B expectations failed:\n  "
+			.. table.concat(failures, "\n  ")
+	)
 end
 print("\nresults match across base/new/native; A/B expectations hold.")

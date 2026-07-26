@@ -7,14 +7,33 @@ local E = require("tests/eval")
 local function eq(src, expected, label)
 	local got = E.run(src)
 	if got ~= expected then
-		error(string.format("%s: expected %q, got %q", label, expected, got))
+		error(
+			string.format(
+				"%s: expected %q, got %q",
+				label,
+				expected,
+				got
+			)
+		)
 	end
 end
 
 -- if/else with optional braces and optional parens on the condition
-eq("fn int main() { if 1 > 0 { return 10 } else { return 20 } }", 10, "if braced true")
-eq("fn int main() { if 1 < 0 { return 10 } else { return 20 } }", 20, "else branch")
-eq("fn int main() { if 1 > 0 return 10; return 20 }", 10, "if braceless single stmt")
+eq(
+	"fn int main() { if 1 > 0 { return 10 } else { return 20 } }",
+	10,
+	"if braced true"
+)
+eq(
+	"fn int main() { if 1 < 0 { return 10 } else { return 20 } }",
+	20,
+	"else branch"
+)
+eq(
+	"fn int main() { if 1 > 0 return 10; return 20 }",
+	10,
+	"if braceless single stmt"
+)
 -- a brace-less branch is exactly one statement, terminator or not: the `;` is
 -- optional and the branch never swallows the statement that follows it
 eq(

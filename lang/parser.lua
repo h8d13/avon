@@ -136,7 +136,8 @@ function Tokenizer:extract_pragmas(input)
 				-- trim into a fresh local: loop vars are const in Lua 5.5
 				local seg = raw:match("^%s*(.-)%s*$")
 				if seg ~= "" then
-					local kind, a, b = classify_pragma(seg, m)
+					local kind, a, b =
+						classify_pragma(seg, m)
 					if kind == "rebind" then
 						m = a
 					elseif kind == "alias" then
@@ -303,7 +304,14 @@ function Tokenizer:scan_char()
 	local code, after
 	if ch == "\\" then
 		local esc = input:sub(i + 2, i + 2)
-		local map = { n = 10, t = 9, r = 13, ["0"] = 0, ["\\"] = 92, ["'"] = 39 }
+		local map = {
+			n = 10,
+			t = 9,
+			r = 13,
+			["0"] = 0,
+			["\\"] = 92,
+			["'"] = 39,
+		}
 		code = map[esc] or string.byte(esc)
 		after = i + 3 -- '\x
 	else
@@ -312,7 +320,14 @@ function Tokenizer:scan_char()
 	end
 	if input:sub(after, after) ~= "'" then
 		local l, col = self:linecol()
-		error(string.format("%d:%d: unterminated char literal", l, col), 0)
+		error(
+			string.format(
+				"%d:%d: unterminated char literal",
+				l,
+				col
+			),
+			0
+		)
 	end
 	self.i = after + 1
 	return { type = TokenType.Number, value = code, pos = i }
@@ -444,14 +459,18 @@ function Parser:nud(tok)
 		end
 		-- `null` is a real literal (emits Lua nil), not an unbound name that
 		-- happens to read as nil -- so a mistyped identifier no longer aliases it
-		if tok.value == "null" then return { type = "null", pos = tok.pos } end
+		if tok.value == "null" then
+			return { type = "null", pos = tok.pos }
+		end
 		-- qualified name: module.func (e.g. math.sqrt, cjson.encode)
 		local name = tok.value
 		while self:peek().value == "." do
 			self:next()
 			name = name .. "." .. self:expect(TokenType.Ident).value
 		end
-		if self:peek().value == "(" then return self:parse_call(name, tok.pos) end
+		if self:peek().value == "(" then
+			return self:parse_call(name, tok.pos)
+		end
 		return { type = "identifier", name = name, pos = tok.pos }
 	elseif tok.value == "(" then
 		local expr = self:parse_expression()
@@ -485,7 +504,8 @@ function Parser:nud(tok)
 end
 
 -- compound assignment ops desugar `a OP= b` to `a = a OP b`
-local compound = { ["+="] = "+", ["-="] = "-", ["*="] = "*", ["/="] = "/", ["%="] = "%" }
+local compound =
+	{ ["+="] = "+", ["-="] = "-", ["*="] = "*", ["/="] = "/", ["%="] = "%" }
 
 -- Left denotation (binary infix)
 function Parser:led(op_tok, left)
@@ -504,13 +524,22 @@ function Parser:led(op_tok, left)
 	if op_tok.value == "(" then
 		-- postfix call of an arbitrary callee: `f()()`, `obj.m()`, `g[i]()`.
 		-- The opening `(` is already consumed by the Pratt loop.
-		return { type = "call", callee = left, args = self:parse_args_rest() }
+		return {
+			type = "call",
+			callee = left,
+			args = self:parse_args_rest(),
+		}
 	end
 	if op_tok.value == "?" then
 		local then_e = self:parse_expression(0) -- delimited by ':'
 		self:expect(":")
 		local else_e = self:parse_expression(0) -- right-assoc: binds rest
-		return { type = "ternary", cond = left, thenE = then_e, elseE = else_e }
+		return {
+			type = "ternary",
+			cond = left,
+			thenE = then_e,
+			elseE = else_e,
+		}
 	end
 	local cop = compound[op_tok.value]
 	if cop then
@@ -520,7 +549,12 @@ function Parser:led(op_tok, left)
 			type = "binary",
 			op = "=",
 			left = left,
-			right = { type = "binary", op = cop, left = left, right = rhs },
+			right = {
+				type = "binary",
+				op = cop,
+				left = left,
+				right = rhs,
+			},
 		}
 	end
 	local right = self:parse_expression(Precedence[op_tok.value])
@@ -545,7 +579,12 @@ end
 -- the `(` led instead, carrying a `callee` expression rather than a name.
 function Parser:parse_call(name, pos)
 	self:expect("(")
-	return { type = "call", name = name, args = self:parse_args_rest(), pos = pos }
+	return {
+		type = "call",
+		name = name,
+		args = self:parse_args_rest(),
+		pos = pos,
+	}
 end
 
 -- Lookahead: is this Ident-led statement a declaration (`T name` /
@@ -812,7 +851,8 @@ function Parser:parse_function()
 		repeat
 			local param_type = self:expect(TokenType.Ident).value
 			local param_name = self:expect(TokenType.Ident).value
-			params[#params + 1] = { type = param_type, name = param_name }
+			params[#params + 1] =
+				{ type = param_type, name = param_name }
 		until self:peek().value ~= "," or not self:next()
 	end
 	self:expect(")")
@@ -871,7 +911,13 @@ function Parser:parse_for()
 	self:expect(";")
 	local update = self:parse_statement() -- e.g. an assignment
 	local body = self:parse_block()
-	return { type = "for", init = init, cond = cond, update = update, body = body }
+	return {
+		type = "for",
+		init = init,
+		cond = cond,
+		update = update,
+		body = body,
+	}
 end
 
 function Parser:parse()

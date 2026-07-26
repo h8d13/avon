@@ -4,7 +4,11 @@
 -- Usage, from anywhere: lua playground/waste.lua file.nova [more.nova ...]
 local here = arg[0]:match("^(.*)/[^/]*$") or "."
 local root = here .. "/.."
-package.path = root .. "/lang/?.lua;" .. root .. "/codegen/?.lua;" .. package.path
+package.path = root
+	.. "/lang/?.lua;"
+	.. root
+	.. "/codegen/?.lua;"
+	.. package.path
 local Parser = require("parser")
 local Avon = require("avon")
 
@@ -66,7 +70,9 @@ for _, path in ipairs(arg) do
 
 	local orphans = 0
 	for label in out:gmatch("::(__cont%d+)::") do
-		if not out:find("goto " .. label, 1, true) then orphans = orphans + 1 end
+		if not out:find("goto " .. label, 1, true) then
+			orphans = orphans + 1
+		end
 	end
 
 	print(string.format("== %s ==", path))
@@ -90,11 +96,17 @@ for _, path in ipairs(arg) do
 			#dead > 0 and table.concat(dead, " ") or "(none)"
 		)
 	)
-	print(string.format("  orphan continue labels: %d (free after load)", orphans))
+	print(
+		string.format(
+			"  orphan continue labels: %d (free after load)",
+			orphans
+		)
+	)
 end
 
 -- fixed costs, measured once
-local empty = Avon.compile(Parser:new("fn int main() { return 0 }"):parse().body)
+local empty =
+	Avon.compile(Parser:new("fn int main() { return 0 }"):parse().body)
 print(
 	string.format(
 		"\nempty-module floor: %d bytes emitted, %d bytecode",

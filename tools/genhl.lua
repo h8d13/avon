@@ -13,7 +13,9 @@ local function read_keywords()
 	local src = fh:read("*a")
 	fh:close()
 	local block = src:match("local keywords = (%b{})")
-	if not block then error("could not find the keywords table in " .. PARSER) end
+	if not block then
+		error("could not find the keywords table in " .. PARSER)
+	end
 	local words = {}
 	for w in block:gmatch('%["(%a+)"%]%s*=%s*true') do
 		words[#words + 1] = w

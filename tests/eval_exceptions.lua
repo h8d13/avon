@@ -7,7 +7,14 @@ local E = require("tests/eval")
 local function eq(src, expected, label)
 	local got = E.run(src)
 	if got ~= expected then
-		error(string.format("%s: expected %q, got %q", label, expected, got))
+		error(
+			string.format(
+				"%s: expected %q, got %q",
+				label,
+				expected,
+				got
+			)
+		)
 	end
 end
 
@@ -109,7 +116,9 @@ do
       return code
     }
   ]])
-	if got ~= 1 then error("host error caught: expected 1, got " .. tostring(got)) end
+	if got ~= 1 then
+		error("host error caught: expected 1, got " .. tostring(got))
+	end
 	if not (out[1] and out[1]:find("bad argument", 1, true)) then
 		error(
 			"host error message: expected host string, got "

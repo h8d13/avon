@@ -7,7 +7,14 @@ local E = require("tests/eval")
 local function eq(src, expected, label)
 	local got = E.run(src)
 	if got ~= expected then
-		error(string.format("%s: expected %q, got %q", label, expected, got))
+		error(
+			string.format(
+				"%s: expected %q, got %q",
+				label,
+				expected,
+				got
+			)
+		)
 	end
 end
 
@@ -25,7 +32,10 @@ do
 	local ok, err = pcall(E.run, "fn int main() {\n  return typo\n}")
 	if ok then error("positional error: expected failure, but it ran") end
 	if not tostring(err):find("^2:10: unknown name 'typo'") then
-		error("positional error: expected 2:10 tag, got " .. tostring(err))
+		error(
+			"positional error: expected 2:10 tag, got "
+				.. tostring(err)
+		)
 	end
 end
 
@@ -62,7 +72,11 @@ eq(
 )
 
 -- a catch variable is bound inside its handler
-eq("fn int main() { try { throw 7 } catch e { return e } return 0 }", 7, "catch var")
+eq(
+	"fn int main() { try { throw 7 } catch e { return e } return 0 }",
+	7,
+	"catch var"
+)
 
 -- an iterator-form loop variable is bound in the body
 eq(

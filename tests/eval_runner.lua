@@ -3,7 +3,10 @@
 -- helpful failure for a bogus entry. Uses the same interpreter running this
 -- test (arg[-1]); assumes the project-root cwd like every other test.
 local lua = arg[-1]
-	or (rawget(_G, "jit") and "luajit" or "lua" .. _VERSION:match("%d+%.%d+"))
+	or (
+		rawget(_G, "jit") and "luajit"
+		or "lua" .. _VERSION:match("%d+%.%d+")
+	)
 
 -- the entry's return value is the exit status, so the assertions below are
 -- about $? rather than stdout. io.popen's close returns the status only on
@@ -20,7 +23,14 @@ end
 
 local function eq(got, expected, label)
 	if got ~= expected then
-		error(string.format("%s: expected %q, got %q", label, expected, got))
+		error(
+			string.format(
+				"%s: expected %q, got %q",
+				label,
+				expected,
+				got
+			)
+		)
 	end
 end
 

@@ -54,7 +54,9 @@ end
 -- from the cache: the `}` after the dangling `+` sits at line 3, col 1
 local bad = "fn int main() {\n\treturn 1 +\n}"
 local ok2, err2 = pcall(function() return Parser:new(bad):parse() end)
-if ok2 then error("dangling operator: expected a parse error, but it parsed") end
+if ok2 then
+	error("dangling operator: expected a parse error, but it parsed")
+end
 if not tostring(err2):find("^3:1: ") then
 	error("expected error tagged 3:1, got " .. tostring(err2))
 end

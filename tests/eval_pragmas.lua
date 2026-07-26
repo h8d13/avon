@@ -5,7 +5,14 @@ local E = require("tests/eval")
 local function eq(src, expected, label)
 	local got = E.run(src)
 	if got ~= expected then
-		error(string.format("%s: expected %q, got %q", label, expected, got))
+		error(
+			string.format(
+				"%s: expected %q, got %q",
+				label,
+				expected,
+				got
+			)
+		)
 	end
 end
 
@@ -77,7 +84,11 @@ eq(
 )
 
 -- several directives share one line, `;`-separated (spaces optional)
-eq("__fn = f; __return = r\nf int main() { r 8 }", 8, "two directives, one line")
+eq(
+	"__fn = f; __return = r\nf int main() { r 8 }",
+	8,
+	"two directives, one line"
+)
 eq("__fn=f;__return=r\nf int main(){r 6}", 6, "semicolon directives, no spaces")
 
 -- the marker can be rebound mid-line; later segments use the new marker
@@ -103,11 +114,13 @@ eq(
 )
 
 -- guard survives a rebound marker: an alias may not be an existing keyword
-if not E.fails([[
+if
+	not E.fails([[
   __pragma = $$
   $$return = if
   fn int main() { return 0 }
-]]) then
+]])
+then
 	error("shadow guard did not fire under rebound marker")
 end
 
