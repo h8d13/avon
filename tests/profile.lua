@@ -2,7 +2,7 @@
 -- only code running under each workload is the generated chunk (plus C builtins
 -- like math.floor, which raise no line events). So a line hook over the chunk
 -- attributes execution directly to emitted constructs -- which shim costs what.
--- Usage from the project root: `lua5.4 tests/profile.lua`
+-- Usage from the project root: `lua tests/profile.lua`
 local Parser = require("lang/parser")
 local Avon = require("codegen/avon")
 

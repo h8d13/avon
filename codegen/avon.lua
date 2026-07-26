@@ -12,9 +12,10 @@
 --   - `+` concatenates if either side has string type (is_str)
 --   - array elements default-read as 0       -> __ZERO metatable
 --
--- Targets both Lua 5.3/5.4 and LuaJIT (Lua 5.1 + the `bit` library), detected
--- from the host running the compiler (`jit` global). Bitwise ops emit operators
--- on 5.4 and bit.* calls on LuaJIT.
+-- Targets both PUC Lua and LuaJIT (Lua 5.1 + the `bit` library). Which one is
+-- detected from the host running the compiler (the `jit` global), never from a
+-- version number, so a new PUC release needs no change here: bitwise ops emit
+-- native operators on PUC and bit.* calls on LuaJIT.
 --
 -- try/catch is a pcall around the body. Where the body proves safe
 -- (try_hoist_params) it compiles to a chunk-level function called with its
@@ -396,7 +397,7 @@ function E_binary(cx, node)
 		cx.used.__fmod = true
 		return "__fmod(" .. L .. ", " .. R .. ")"
 	end
-	-- bitwise: operators on 5.3/5.4, the `bit` library on LuaJIT
+	-- bitwise: native operators on PUC Lua, the `bit` library on LuaJIT
 	if JIT then
 		local jb = {
 			["&"] = "band",
@@ -1283,7 +1284,7 @@ local function emit_prelude(cx)
 	end
 	-- round toward zero, inlined into both helpers: a separate __trunc would add
 	-- a Lua call to every int / and % (3-deep chain vs 2), and on the
-	-- interpreted 5.3/5.4 path that is ~a third of the calls on div/mod-heavy
+	-- interpreted PUC Lua path that is ~a third of the calls on div/mod-heavy
 	-- code. q >= 0 picks floor, else ceil -- truncation toward zero, the C `/`.
 	if u.__idiv then
 		push(cx, "local function __idiv(a, b)")

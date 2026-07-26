@@ -6,7 +6,9 @@ set -e
 files=$(git diff --cached --name-only --diff-filter=ACM | grep '\.nova$' || true)
 [ -z "$files" ] && exit 0
 
-lua=$(command -v lua5.4 || command -v luajit || command -v lua)
+# prefer whatever `lua` resolves to: pinning a release here means the hook
+# quietly checks an interpreter the developer has already moved off of
+lua=$(command -v lua || command -v luajit)
 [ -z "$lua" ] && { echo "pre-commit: no lua interpreter found" >&2; exit 1; }
 
 # shellcheck disable=SC2086

@@ -146,11 +146,15 @@ fn int recover() {
 	return code
 }
 
-// entry point; `./nova hello.nova` runs this and prints its result
+// entry point; `./nova hello.nova` runs this. main's return value is the
+// process exit status, as in C -- the runner prints nothing on its own, so
+// anything worth seeing goes through print
 fn int main() {
 	int q, r = divmod(17, 5); // destructures both results: q=3, r=2
 	print(greeting + " World!"); // file-scope str concatenates
-	return sum(5) + abs(id(-3)) + sign(-42) + base
+	float total = sum(5) + abs(id(-3)) + sign(-42) + base
 		+ max(3, 9) + oddbit(5) + grade(2) + q + r + circle(2) + hyp(3, 4)
-		+ oddsum(20) + safe(-5) + safe(7) + recover() + axisweight(Y)
+		+ oddsum(20) + safe(-5) + safe(7) + recover() + axisweight(Y);
+	print(total);
+	return 0
 }

@@ -1,7 +1,7 @@
 -- Nova syntax checker. Parses and transpiles each given .nova file and reports
 -- errors as `file:line:col: message`. Exit status is non-zero if any file
 -- failed, so it drops straight into pre-commit hooks and CI.
---   lua5.4 tools/check.lua FILE...   (or pass a dir to check *.nova under it)
+--   lua tools/check.lua FILE...   (or pass a dir to check *.nova under it)
 package.path = "lang/?.lua;codegen/?.lua;" .. package.path
 local Parser = require("parser")
 local Avon = require("avon")

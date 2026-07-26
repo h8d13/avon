@@ -9,8 +9,8 @@
 --   - all three variants must agree on results, and each workload declares
 --     an expectation -- "faster" must beat baseline by >= 5%, "par" must
 --     stay within 20% -- so a regression fails the run, loudly
--- Usage from the project root: `luajit tests/bench.lua` (or `lua5.4`,
--- where the ffi emission is off and only the try hoist differs).
+-- Usage from the project root: `luajit tests/bench.lua` (or `lua`, where the
+-- ffi emission is off and only the try hoist differs).
 local Parser = require("lang/parser")
 local Avon = require("codegen/avon")
 

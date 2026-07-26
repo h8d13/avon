@@ -3,7 +3,7 @@
 -- the real lexer. Types/constants are the highlight palette (the lexer treats
 -- any identifier as a type in declaration position, so those aren't a lexer
 -- keyword set -- we list the primitives editors should colour).
--- Run from the project root:  lua5.4 tools/genhl.lua
+-- Run from the project root:  lua tools/genhl.lua
 local PARSER = "lang/parser.lua"
 local OUTDIR = "editors"
 

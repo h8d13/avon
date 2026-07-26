@@ -3,6 +3,8 @@
 -- Usage: ./nova <file.nova> [--entry name] [int args...]
 --   --entry  function to call (default: main)
 --   int args are passed to that function
+-- The entry's return value becomes the exit status (C semantics); the runner
+-- prints nothing of its own. Toolchain failures report on stderr and exit 1.
 -- imports (Nova files, extensionless modules, luarocks packages): see README.
 
 local here = arg[0]:match("^(.*)/[^/]*$") or "."
@@ -101,4 +103,18 @@ if not ok then
 	os.exit(1)
 end
 
-print(result[1] or 0)
+-- C semantics: the entry's return value IS the process exit status and
+-- nothing is printed -- a program that wants output calls print itself.
+-- A missing return is 0 (success). Floats truncate because exit() takes an
+-- int, and the OS keeps only the low 8 bits of it. Host calls can hand back
+-- a Lua boolean (os.execute); map it by success sense rather than passing it
+-- to os.exit, which only accepts one on 5.2+ (LuaJIT would reject it).
+local code = result[1]
+if code == nil then
+	code = 0
+elseif type(code) == "boolean" then
+	code = code and 0 or 1
+else
+	code = math.floor(tonumber(code) or 0)
+end
+os.exit(code)

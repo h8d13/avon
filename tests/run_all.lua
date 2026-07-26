@@ -1,4 +1,4 @@
--- Run every test file from the project root: `lua5.4 tests/run_all.lua`.
+-- Run every test file from the project root: `lua tests/run_all.lua`.
 -- Each test prints "ok" on success and error()s on failure; this runs them in
 -- child processes so one failure does not abort the rest, and reports a tally.
 local tests = {
@@ -18,7 +18,11 @@ local tests = {
 	"tests/eval_runner.lua",
 }
 
-local lua = arg[-1] or "lua5.4"
+-- children run under the SAME interpreter as this process, so a suite run
+-- under 5.5 never silently tests 5.4. arg[-1] is the running binary; the
+-- fallback names it from the live version rather than pinning a release.
+local lua = arg[-1]
+	or (rawget(_G, "jit") and "luajit" or "lua" .. _VERSION:match("%d+%.%d+"))
 local passed, failed = 0, {}
 for _, t in ipairs(tests) do
 	-- capture output so a passing test stays quiet; show it only on failure

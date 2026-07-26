@@ -10,7 +10,7 @@ See https://www.lua.org/manual/5.5/
 **Requires** Lua 5.3+  or LuaJIT (not vanilla 5.1, the output uses `goto`).
 Run it under LuaJIT for ~5–14× on hot code: `luajit ./nova prog.nova`.
 
-> Note: under LuaJIT (doubles only) integers are exact to 2⁵³ and bitwise is 32-bit; Lua 5.4/5.5 gives full 64-bit.
+> Note: under LuaJIT (doubles only) integers are exact to 2⁵³ and bitwise is 32-bit; PUC Lua's integer subtype gives full 64-bit.
 
 # Avon - 艾汶
 
