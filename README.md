@@ -17,7 +17,6 @@ Run it under LuaJIT for ~5–14× on hot code: `luajit ./nova prog.nova`.
 `avon` is C++ semantics, designed for clarity and modern expression.
 
 > Mostly tested only on **Unix** systems. It is token based and not indent.
-> It supports `{};` C style notations.
 
 ---
 
