@@ -11,7 +11,6 @@ and emits `lua` compiled byte-code directly.
 Run it under LuaJIT for ~5–14× on hot code: `luajit ./nova prog.nova`.
 
 > Note: under LuaJIT (doubles only) integers are exact to 2⁵³ and bitwise is 32-bit;
-> PUC Lua's integer subtype gives full 64-bit.
 
 # Avon - 艾汶
 
