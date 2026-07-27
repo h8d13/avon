@@ -168,7 +168,7 @@ fn int bump() {
 ```
 
 Params and locals shadow a file-scope name. Like aliases, scope is the
-file: a module exports only its functions, never its variables.
+file: a module exports only its functions, not its variables.
 
 The catch: file vars compile to Lua chunk locals, and a module's export
 table is built once -- exporting a variable would copy its value at load
