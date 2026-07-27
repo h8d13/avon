@@ -2,12 +2,12 @@
 
 > Everything in this readme is mostly functional.
 
-Welcome to `avon`, a transpiler; takes code as input passes it through a `parser`
+Avon is a transpiler; takes input through a `parser`
 and emits `lua` compiled byte-code directly.
 
-See https://www.lua.org/manual/5.5/
 
-**Requires** Lua 5.3+  or LuaJIT (not vanilla 5.1, the output uses `goto`).
+**Requires** Lua 5.2+ or LuaJIT. See https://www.lua.org/manual/5.5/
+
 Run it under LuaJIT for ~5–14× on hot code: `luajit ./nova prog.nova`.
 
 > Note: under LuaJIT (doubles only) integers are exact to 2⁵³ and bitwise is 32-bit;
@@ -15,10 +15,10 @@ Run it under LuaJIT for ~5–14× on hot code: `luajit ./nova prog.nova`.
 
 # Avon - 艾汶
 
-`avon` is C++ semantics built on Lua, designed for clarity and modern expression.
+`avon` is C++ semantics, designed for clarity and modern expression.
 
 > Mostly tested only on **Unix** systems. It is token based and not indent.
-> It supports `{};` notations without enforcing them.
+> It supports `{};` C style notations.
 
 ---
 
