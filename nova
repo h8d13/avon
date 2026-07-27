@@ -45,11 +45,16 @@ fh:close() -- existence check only; Loader.run reads and parses the file once
 -- The whole parse -> transpile -> run pipeline runs inside one pcall, so any
 -- error() raised in the toolchain, a missing entry, or an uncaught Nova throw
 -- is caught and reported cleanly.
+-- runtime-error translators, one per compiled module, captured out here so the
+-- error branch below can reach them (Loader.run fills them in inside the pcall)
+local translators = {}
+
 local ok, result = pcall(function()
 	-- compile the entry and recursively resolve/link its imports (Nova-file
 	-- modules first, host modules via require). Loader.run hands back the entry
 	-- AST it already parsed, so entry validation below reuses it (no re-parse).
-	local mods, ast = Loader.run(file)
+	local mods, ast, tr = Loader.run(file)
+	translators = tr
 
 	-- validate the entry point with a helpful list of what's available
 	local funcs = {}
@@ -94,9 +99,20 @@ if not ok then
 		msg = "uncaught throw: " .. tostring(result.value)
 	else
 		msg = tostring(result)
+		-- a runtime error carries a generated "<chunk>:<line>:" prefix in the
+		-- compiled Lua's coordinates; map it back to the Nova source line via
+		-- the module translators before the generic strip below discards it
+		for _, tr in ipairs(translators) do
+			local mapped = tr(msg)
+			if mapped then
+				msg = mapped
+				break
+			end
+		end
 		-- strip Lua's "file:line:" prefix so the message reads as a Nova
-		-- error, but keep a leading "line:col:" -- that is Nova's own
-		-- position tag from the parser or the transpiler
+		-- error, but keep a leading "line:col:" (a parser/transpiler position)
+		-- or a leading "line:" (a translated runtime position) -- neither has a
+		-- non-digit chunk name before the first colon, so the gsub skips them
 		if not msg:match("^%d+:%d+: ") then msg = msg:gsub("^.-:%d+: ", "") end
 	end
 	io.stderr:write("nova: " .. file .. ": " .. msg .. "\n")

@@ -98,5 +98,19 @@ if not out:find("2:9: unknown name 'oops'", 1, true) then
 	error("bad program: expected positional error, got: " .. out)
 end
 
+-- an UNCAUGHT runtime error is translated from the generated chunk line back
+-- to its Nova source line, instead of surfacing with its position stripped off.
+-- Indexing a number is a genuine run-time fault (nothing the frontend can
+-- prove), so it exercises the map rather than a static type check.
+local rt = root .. "/rt.nova"
+fh = assert(io.open(rt, "w"))
+fh:write("fn int main() {\n\tint a = 0;\n\treturn a.field\n}\n")
+fh:close()
+out, code = run(rt)
+if code == 0 then error("runtime error: expected failure, got: " .. out) end
+if not out:find("3: attempt to index", 1, true) then
+	error("runtime error: expected mapped source line, got: " .. out)
+end
+
 os.execute("rm -rf " .. root)
 print("ok")

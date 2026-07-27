@@ -61,4 +61,13 @@ if not tostring(err2):find("^3:1: ") then
 	error("expected error tagged 3:1, got " .. tostring(err2))
 end
 
+-- running out of input mid-block names the missing brace instead of printing
+-- an empty token tail ("Unexpected token: " with nothing after it)
+local unclosed = "fn int main() {\n\treturn 1"
+local ok3, err3 = pcall(function() return Parser:new(unclosed):parse() end)
+if ok3 then error("unclosed brace: expected a parse error, but it parsed") end
+if not tostring(err3):find("end of input", 1, true) then
+	error("unclosed brace: expected 'end of input', got " .. tostring(err3))
+end
+
 print("ok")

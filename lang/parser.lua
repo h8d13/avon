@@ -35,6 +35,16 @@ local TokenType = {
 	EOF = "eof",
 }
 
+-- Human-readable name of a token for an error message. The EOF token carries
+-- an empty value, so an error that interpolates it raw prints nothing (e.g.
+-- "Unexpected token: " with a blank tail); name it explicitly instead. Any
+-- other value-less token falls back to its type for the same reason.
+local function tokname(tok)
+	if tok.type == TokenType.EOF then return "end of input" end
+	if tok.value == nil or tok.value == "" then return tok.type end
+	return tok.value
+end
+
 -- Operator precedence levels
 local Precedence = {
 	["="] = 1,
@@ -421,7 +431,7 @@ end
 function Parser:expect(type_or_val)
 	local tok = self:next()
 	if tok.type ~= type_or_val and tok.value ~= type_or_val then
-		self:err("Expected " .. type_or_val .. ", got " .. tok.value)
+		self:err("Expected " .. type_or_val .. ", got " .. tokname(tok))
 	end
 	return tok
 end
@@ -500,7 +510,13 @@ function Parser:nud(tok)
 			},
 		}
 	end
-	self:err("Unexpected token: " .. tok.value)
+	-- EOF here means the source ran out mid-expression (an unclosed brace or
+	-- paren, a dangling operator); say so instead of "Unexpected token: " with
+	-- a blank tail
+	if tok.type == TokenType.EOF then
+		self:err("unexpected end of input")
+	end
+	self:err("Unexpected token: " .. tokname(tok))
 end
 
 -- compound assignment ops desugar `a OP= b` to `a = a OP b`
@@ -706,9 +722,9 @@ end
 function Parser:parse_try()
 	self:expect("try")
 	local body = self:parse_block()
-	local kw = self:peek().value
-	if kw ~= "catch" and kw ~= "except" then
-		self:err("Expected catch/except after try, got " .. kw)
+	local kw = self:peek()
+	if kw.value ~= "catch" and kw.value ~= "except" then
+		self:err("Expected catch/except after try, got " .. tokname(kw))
 	end
 	self:next()
 	local var = self:expect(TokenType.Ident).value
@@ -736,7 +752,7 @@ function Parser:parse_switch()
 		else
 			self:err(
 				"Expected case or default in switch, got "
-					.. self:peek().value
+					.. tokname(self:peek())
 			)
 		end
 	end
@@ -775,6 +791,10 @@ function Parser:parse_block()
 	self:expect("{")
 	local body = {}
 	while self:peek().value ~= "}" do
+		-- stop at EOF rather than handing the EOF token to parse_statement:
+		-- expect("}") below then reports the unclosed brace as a missing "}"
+		-- ("Expected }, got end of input") instead of a generic token error
+		if self:peek().type == TokenType.EOF then break end
 		body[#body + 1] = self:parse_statement()
 		if self:peek().value == ";" then self:next() end
 	end

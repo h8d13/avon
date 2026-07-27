@@ -75,11 +75,27 @@ local load_file
 
 -- resolve one import and bind it into `env`: a Nova module (.nova or
 -- extensionless) loads recursively, anything else is a host module.
-local function bind_import(env, module, alias, root, cache, stack, prelude)
+local function bind_import(
+	env,
+	module,
+	alias,
+	root,
+	cache,
+	stack,
+	prelude,
+	translators
+)
 	local file = module_to_file(root, module)
 	local value
 	if file then
-		value = load_file(file, root, cache, stack, prelude)
+		value = load_file(
+			file,
+			root,
+			cache,
+			stack,
+			prelude,
+			translators
+		)
 	else
 		value = _G[module] or require(module)
 	end
@@ -95,7 +111,7 @@ end
 -- compile one file, recursively loading its Nova imports. `root` is the entry
 -- directory all dotted paths resolve against; `cache` memoizes by path (so a
 -- shared dependency compiles once); `stack` detects import cycles.
-function load_file(path, root, cache, stack, prelude)
+function load_file(path, root, cache, stack, prelude, translators)
 	if cache[path] then return cache[path] end
 	if stack[path] then error("circular import at " .. path) end
 	stack[path] = true
@@ -116,12 +132,18 @@ function load_file(path, root, cache, stack, prelude)
 				root,
 				cache,
 				stack,
-				prelude
+				prelude,
+				translators
 			)
 		end
 	end
 
-	local mods = Avon.load(ast.body, env, { src = src })
+	local mods, _, translate = Avon.load(ast.body, env, { src = src })
+	-- collect this module's runtime-error translator; the runner tries each
+	-- until one recognizes an uncaught error's chunk prefix (see nova)
+	if translators and translate then
+		translators[#translators + 1] = translate
+	end
 	cache[path] = mods
 	stack[path] = nil
 	-- also hand back the parsed AST: the entry caller (Loader.run) reuses it for
@@ -131,12 +153,21 @@ function load_file(path, root, cache, stack, prelude)
 end
 
 -- Load `path` and all its transitive Nova imports. Returns the entry file's
--- table of functions (name -> Lua function) AND its parsed AST, so the runner
--- can validate the entry point without re-parsing. Dotted imports resolve from
--- the entry file's directory.
+-- table of functions (name -> Lua function), its parsed AST (so the runner can
+-- validate the entry point without re-parsing), and the list of per-module
+-- runtime-error translators. Dotted imports resolve from the entry directory.
 function Loader.run(path)
 	local root = dirname(path)
-	return load_file(path, root, {}, {}, Loader.prelude(root))
+	local translators = {}
+	local mods, ast = load_file(
+		path,
+		root,
+		{},
+		{},
+		Loader.prelude(root),
+		translators
+	)
+	return mods, ast, translators
 end
 
 return Loader

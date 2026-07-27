@@ -171,7 +171,6 @@ function args_str(cx, list, fname)
 	return table.concat(t, ", ")
 end
 
-
 -- collect every name a function binds: params (added by the caller) plus every
 -- `decl` -- locals, array decls, for-/forin-init and decl-list members are all
 -- stamped type="decl" by the parser -- and every catch variable, walked deep so
@@ -291,7 +290,13 @@ function E(cx, node)
 		local c = Econd(cx, node.cond)
 		local a, b = E(cx, node.thenE), E(cx, node.elseE)
 		if is_truthy(cx, node.thenE) then
-			return "(" .. c .. " and (" .. a .. ") or (" .. b .. "))"
+			return "("
+				.. c
+				.. " and ("
+				.. a
+				.. ") or ("
+				.. b
+				.. "))"
 		end
 		return "((" .. c .. " and {" .. a .. "} or {" .. b .. "})[1])"
 	elseif t == "call" then
@@ -369,6 +374,21 @@ end
 -- a host field, a float source) goes through __toint, so a declared `int`
 -- constrains the value instead of merely documenting it.
 local function wrap_int(cx, e, src)
+	-- a provably-string value can never inhabit an int slot. __toint would pass
+	-- it straight through (int is the numeric catch-all, so the shim leaves
+	-- non-numbers alone rather than stringify or parse them), so the mismatch
+	-- would otherwise surface as garbage far from its cause -- e.g. a `fn int`
+	-- that returns "x" printing "x". Reject it here, at its source position,
+	-- with the same line:col diagnostic the frontend gives an unbound name.
+	-- Only PROVABLE strings are caught: host calls and array/table returns have
+	-- is_str = false, so the catch-all int return still admits them unchanged.
+	if is_str(cx, e) then
+		error(
+			at(cx, first_pos(e))
+				.. "type error: string value where int is expected",
+			0
+		)
+	end
 	if is_int(cx, e) then return src end
 	cx.used.__toint = true
 	return "__toint(" .. src .. ")"
@@ -1923,15 +1943,39 @@ function Avon.compile(body, env, opts)
 	end
 	push(cx, "return {" .. table.concat(kv, ", ") .. "}")
 
-	return table.concat(cx.buf, "\n")
+	-- hand back the chunk name and final generated-line -> source-line map
+	-- alongside the source: Avon.load turns them into a translator that maps
+	-- an uncaught runtime error's position back to Nova coordinates (the same
+	-- mapping the in-chunk __SRC shim does for try-caught errors)
+	return table.concat(cx.buf, "\n"), cx.chunkname, cx.map
+end
+
+-- Build a translator for a chunk's uncaught runtime errors: rewrite a Lua
+-- error whose prefix is this chunk's own "<chunkname>:<generated line>:" to the
+-- Nova source line via the compile-time line map. Mirrors the in-chunk __SRC
+-- shim (which handles try-caught errors), but runs host-side for errors that
+-- propagate all the way out. Returns nil when the prefix is not this chunk's,
+-- so a caller can try each module's translator until one claims the error.
+local function make_translator(chunkname, map)
+	-- chunk_id yields only pattern-safe chars (letters, digits, '#', '_'),
+	-- so the name splices into a Lua pattern without escaping -- same as __SRC
+	local prefix = "^" .. chunkname .. ":(%d+): (.*)"
+	return function(msg)
+		if type(msg) ~= "string" then return nil end
+		local ln, rest = msg:match(prefix)
+		local srcline = ln and map[tonumber(ln)]
+		if srcline then return srcline .. ": " .. rest end
+		return nil
+	end
 end
 
 -- Compile Nova `body` and load it. `env` supplies builtins/imports (and falls
--- back to globals); returns a table mapping function name -> Lua function.
+-- back to globals); returns a table mapping function name -> Lua function, the
+-- generated Lua source, and (when opts.src is set) a runtime-error translator.
 -- `opts` (optional) selects emission choices, see Avon.compile.
 function Avon.load(body, env, opts)
 	env = setmetatable(env or {}, { __index = _G })
-	local src = Avon.compile(body, env, opts)
+	local src, chunkname, map = Avon.compile(body, env, opts)
 	-- the chunkname must match what the emitted __SRC shim expects (same
 	-- chunk_id derivation), or runtime error prefixes would not translate
 	local name = "=" .. (opts and opts.src and chunk_id(opts.src) or "nova")
@@ -1943,7 +1987,12 @@ function Avon.load(body, env, opts)
 		chunk, err = load(src, name, "t", env)
 	end
 	if not chunk then error("transpile load failed: " .. tostring(err)) end
-	return chunk(), src
+	-- only wire a translator when a source is available: without opts.src the
+	-- chunkname is the generic "nova" and the map has no source lines to hit
+	local translate = (opts and opts.src)
+			and make_translator(chunkname, map)
+		or nil
+	return chunk(), src, translate
 end
 
 return Avon
