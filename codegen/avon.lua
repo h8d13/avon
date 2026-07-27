@@ -374,21 +374,6 @@ end
 -- a host field, a float source) goes through __toint, so a declared `int`
 -- constrains the value instead of merely documenting it.
 local function wrap_int(cx, e, src)
-	-- a provably-string value can never inhabit an int slot. __toint would pass
-	-- it straight through (int is the numeric catch-all, so the shim leaves
-	-- non-numbers alone rather than stringify or parse them), so the mismatch
-	-- would otherwise surface as garbage far from its cause -- e.g. a `fn int`
-	-- that returns "x" printing "x". Reject it here, at its source position,
-	-- with the same line:col diagnostic the frontend gives an unbound name.
-	-- Only PROVABLE strings are caught: host calls and array/table returns have
-	-- is_str = false, so the catch-all int return still admits them unchanged.
-	if is_str(cx, e) then
-		error(
-			at(cx, first_pos(e))
-				.. "type error: string value where int is expected",
-			0
-		)
-	end
 	if is_int(cx, e) then return src end
 	cx.used.__toint = true
 	return "__toint(" .. src .. ")"

@@ -140,34 +140,4 @@ eq(
 	"an array still returns through an int signature"
 )
 
--- but a PROVABLY-string value in an int slot is a static type error, not a
--- silent pass-through: `fn int` returning a string and `int x = "..."` are both
--- rejected at compile time with a positioned message. The annotation is
--- load-bearing wherever the value's type is statically known (unlike the array
--- above, whose type the frontend cannot prove, so it still rides through).
-local function type_error(src, label)
-	local ok, err = pcall(E.run, src)
-	if ok then
-		error(label .. ": expected a type error, but it compiled")
-	end
-	if
-		not tostring(err):find(
-			"type error: string value where int",
-			1,
-			true
-		)
-	then
-		error(label .. ": unexpected message: " .. tostring(err))
-	end
-end
-
-type_error(
-	'fn int who() { return "nope" } fn int main() { return who() }',
-	"string returned from fn int"
-)
-type_error(
-	'fn int main() { int x = "nope"; return x }',
-	"string assigned to an int local"
-)
-
 print("ok")

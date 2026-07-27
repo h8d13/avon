@@ -259,12 +259,6 @@ int v = xs[i + 1];
 read is a plain Lua table miss and yields `null`, the same as C reading past
 an array -- array bounds are not enforced at run time.
 
-Scalar type names, by contrast, are load-bearing where the compiler can prove
-them: a statically-known mismatch such as returning a string from `fn int`, or
-`int x = "..."`, is a compile error. Values it cannot type -- host-module
-calls, and the arrays returned through `fn int` as a catch-all -- still pass
-through the declared type unchecked.
-
 Indexing chains for nested arrays and call results.
 
 ```cpp
